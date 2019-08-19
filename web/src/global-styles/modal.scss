@@ -1,0 +1,7 @@
+$modal-content-color: var(--body-color);
+$modal-content-bg: var(--body-bg);
+$modal-content-border-color: var(--border-color);
+$modal-backdrop-bg: #000000;
+$modal-backdrop-opacity: 0.9;
+
+@import 'bootstrap/scss/modal';

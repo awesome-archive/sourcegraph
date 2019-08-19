@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/pkg/suspiciousnames"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
 	"github.com/sourcegraph/sourcegraph/pkg/actor"
@@ -70,6 +71,8 @@ func (o *OrgResolver) OrgID() int32 {
 func (o *OrgResolver) Name() string {
 	return o.org.Name
 }
+
+func (o *OrgResolver) Username() string { return o.org.Name }
 
 func (o *OrgResolver) DisplayName() *string {
 	return o.org.DisplayName
@@ -167,6 +170,12 @@ func (o *OrgResolver) ViewerIsMember(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func (o *OrgResolver) NamespaceName() string { return o.org.Name }
+
+func (o *OrgResolver) Campaigns(ctx context.Context, args *graphqlutil.ConnectionArgs) (CampaignConnection, error) {
+	return CampaignsInNamespace(ctx, o.ID(), args)
 }
 
 func (*schemaResolver) CreateOrganization(ctx context.Context, args *struct {

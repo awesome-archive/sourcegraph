@@ -22,6 +22,17 @@ $border-radius-lg: 4px;
 $font-size-base: 0.875rem;
 $line-height-base: (20/14);
 
+$spacer: 0.5rem;
+$spacers: (
+    0: 0,
+    1: $spacer * 0.25,
+    2: $spacer * 0.5,
+    3: $spacer,
+    4: $spacer * 1.5,
+    5: $spacer * 2.25,
+    6: $spacer * 3,
+);
+
 $grid-gutter-width: 1.5rem;
 
 // No max width except for xl.
@@ -52,6 +63,9 @@ $warning: $yellow;
 $danger: $red;
 $secondary-light: darken($gray-01, 5%);
 
+$theme-colors: (
+    'purple': $oc-violet-6,
+);
 $theme-colors-light: (
     'secondary': $secondary-light,
 );
@@ -142,6 +156,7 @@ $code-bg: var(--body-bg);
 @import 'bootstrap/scss/grid';
 @import 'bootstrap/scss/progress';
 @import 'bootstrap/scss/tooltip';
+@import './global-styles/modal';
 @import './global-styles/badge';
 @import './global-styles/breadcrumb';
 @import './global-styles/card';
@@ -223,6 +238,10 @@ body,
     flex: 1;
 }
 
+.bg-body {
+    background-color: $body-bg;
+}
+
 // Our simple popovers only need these styles. We don't want the caret or special font sizes from
 // Bootstrap's popover CSS.
 .popover-inner {
@@ -259,7 +278,10 @@ body,
 @import './components/completion/CompletionWidgetDropdown';
 @import './components/CopyableText';
 @import './components/FilteredConnection';
+@import './components/infoSidebar/index';
+@import './components/overviewPagesArea/index';
 @import './components/SaveToolbar';
+@import './components/timeline/Timeline';
 @import './components/DecoratedTextLines';
 @import './components/HeroPage';
 @import './components/ModalPage';
@@ -281,3 +303,4 @@ body,
 @import '~@sourcegraph/react-loading-spinner/lib/LoadingSpinner.css';
 
 @import '../../shared/src/index';
+@import './diagnostics/index';

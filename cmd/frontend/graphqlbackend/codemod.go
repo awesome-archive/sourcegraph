@@ -81,7 +81,7 @@ func (r *codemodResultResolver) Label() (*markdownResolver, error) {
 }
 
 func (r *codemodResultResolver) URL() string {
-	return ""
+	return r.fileURL
 }
 
 func (r *codemodResultResolver) Detail() (*markdownResolver, error) {
@@ -95,6 +95,13 @@ func (r *codemodResultResolver) Detail() (*markdownResolver, error) {
 
 func (r *codemodResultResolver) Matches() []*searchResultMatchResolver {
 	return r.matches
+}
+
+func (r *codemodResultResolver) Commit() *GitCommitResolver { return r.commit }
+
+func (r *codemodResultResolver) RawDiff() string {
+	// TODO!(sqs) HACK gitserver's CreateCommitFromPatch assumes `patch -p1` so we need to add `a/` and `b/` path prefixes
+	return "diff git\nindex\n" + strings.Replace(strings.Replace(r.diff, "+++ ", "+++ b/", 1), "--- ", "--- a/", 1) + "\n"
 }
 
 func validateQuery(q *query.Query) (*args, error) {
@@ -196,7 +203,8 @@ func performCodemod(ctx context.Context, args *search.Args) ([]searchResultResol
 	var results []searchResultResolver
 	for _, ur := range unflattened {
 		for _, resolver := range ur {
-			results = append(results, &resolver)
+			v := resolver
+			results = append(results, &v)
 		}
 	}
 
@@ -305,17 +313,17 @@ func callCodemodInRepo(ctx context.Context, repoRevs *search.RepositoryRevisions
 		if err != nil {
 			return nil, err
 		}
-		result := codemodResultResolver{
+		results = append(results, codemodResultResolver{
 			commit: &GitCommitResolver{
 				repo:     &RepositoryResolver{repo: repoRevs.Repo},
 				inputRev: &repoRevs.Revs[0].RevSpec,
+				oid:      GitObjectID(commit),
 			},
 			path:    raw.URI,
 			fileURL: fileURL,
 			diff:    raw.Diff,
 			matches: matches,
-		}
-		results = append(results, result)
+		})
 	}
 
 	return results, nil
