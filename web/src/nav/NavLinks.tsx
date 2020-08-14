@@ -10,18 +10,27 @@ import * as GQL from '../../../shared/src/graphql/schema'
 import { PlatformContextProps } from '../../../shared/src/platform/context'
 import { SettingsCascadeProps } from '../../../shared/src/settings/settings'
 import { WebActionsNavItems, WebCommandListPopoverButton } from '../components/shared'
-import { isDiscussionsEnabled } from '../discussions'
-import { KeybindingsProps } from '../keybindings'
-import { ThemePreferenceProps, ThemeProps } from '../theme'
+import { ThemeProps } from '../../../shared/src/theme'
 import { EventLoggerProps } from '../tracking/eventLogger'
 import { fetchAllStatusMessages, StatusMessagesNavItem } from './StatusMessagesNavItem'
 import { UserNavItem } from './UserNavItem'
+import { CampaignsNavItem } from '../enterprise/campaigns/global/nav/CampaignsNavItem'
+import { ThemePreferenceProps } from '../theme'
+import {
+    KeyboardShortcutsProps,
+    KEYBOARD_SHORTCUT_SHOW_COMMAND_PALETTE,
+    KEYBOARD_SHORTCUT_SWITCH_THEME,
+} from '../keyboardShortcuts/keyboardShortcuts'
+import { isErrorLike } from '../../../shared/src/util/errors'
+import { Settings } from '../schema/settings.schema'
+import CompassOutlineIcon from 'mdi-react/CompassOutlineIcon'
+import { InsightsNavItem } from '../insights/InsightsNavLink'
 
 interface Props
-    extends SettingsCascadeProps,
-        KeybindingsProps,
+    extends SettingsCascadeProps<Settings>,
+        KeyboardShortcutsProps,
         ExtensionsControllerProps<'executeCommand' | 'services'>,
-        PlatformContextProps<'forceUpdateTooltip'>,
+        PlatformContextProps<'forceUpdateTooltip' | 'settings'>,
         ThemeProps,
         ThemePreferenceProps,
         EventLoggerProps,
@@ -30,8 +39,8 @@ interface Props
     history: H.History
     authenticatedUser: GQL.IUser | null
     showDotComMarketing: boolean
+    showCampaigns: boolean
     isSourcegraphDotCom: boolean
-    showStatusIndicator: boolean
 }
 
 export class NavLinks extends React.PureComponent<Props> {
@@ -61,8 +70,19 @@ export class NavLinks extends React.PureComponent<Props> {
                 {(!this.props.showDotComMarketing || !!this.props.authenticatedUser) && (
                     <li className="nav-item">
                         <Link to="/explore" className="nav-link">
-                            Explore
+                            <CompassOutlineIcon className="icon-inline" /> Explore
                         </Link>
+                    </li>
+                )}
+                {!isErrorLike(this.props.settingsCascade.final) &&
+                    this.props.settingsCascade.final?.experimentalFeatures?.codeInsights && (
+                        <li className="nav-item">
+                            <InsightsNavItem />
+                        </li>
+                    )}
+                {this.props.showCampaigns && (
+                    <li className="nav-item">
+                        <CampaignsNavItem />
                     </li>
                 )}
                 {!this.props.authenticatedUser && (
@@ -94,13 +114,13 @@ export class NavLinks extends React.PureComponent<Props> {
                     </>
                 )}
                 {!this.props.isSourcegraphDotCom &&
-                    this.props.showStatusIndicator &&
                     this.props.authenticatedUser &&
                     this.props.authenticatedUser.siteAdmin && (
                         <li className="nav-item">
                             <StatusMessagesNavItem
                                 fetchMessages={fetchAllStatusMessages}
                                 isSiteAdmin={this.props.authenticatedUser.siteAdmin}
+                                history={this.props.history}
                             />
                         </li>
                     )}
@@ -109,7 +129,7 @@ export class NavLinks extends React.PureComponent<Props> {
                         {...this.props}
                         buttonClassName="nav-link btn btn-link"
                         menu={ContributableMenu.CommandPalette}
-                        toggleVisibilityKeybinding={this.props.keybindings.commandPalette}
+                        keyboardShortcutForShow={KEYBOARD_SHORTCUT_SHOW_COMMAND_PALETTE}
                     />
                 </li>
                 {this.props.authenticatedUser && (
@@ -118,8 +138,7 @@ export class NavLinks extends React.PureComponent<Props> {
                             {...this.props}
                             authenticatedUser={this.props.authenticatedUser}
                             showDotComMarketing={this.props.showDotComMarketing}
-                            showDiscussions={isDiscussionsEnabled(this.props.settingsCascade)}
-                            switchThemeKeybinding={this.props.keybindings.switchTheme}
+                            keyboardShortcutForSwitchTheme={KEYBOARD_SHORTCUT_SWITCH_THEME}
                         />
                     </li>
                 )}

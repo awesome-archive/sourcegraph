@@ -1,20 +1,60 @@
-import { Endpoint, isEndpoint } from '@sourcegraph/comlink'
-import { NextObserver, Observable, Subscribable } from 'rxjs'
+import { Endpoint } from 'comlink'
+import { NextObserver, Observable, Subscribable, Subscription } from 'rxjs'
 import { SettingsEdit } from '../api/client/services/settings'
 import { GraphQLResult } from '../graphql/graphql'
 import * as GQL from '../graphql/schema'
 import { Settings, SettingsCascadeOrError } from '../settings/settings'
-import { FileSpec, PositionSpec, RawRepoSpec, RepoSpec, RevSpec, ViewStateSpec } from '../util/url'
+import { TelemetryService } from '../telemetry/telemetryService'
+import { FileSpec, UIPositionSpec, RawRepoSpec, RepoSpec, RevisionSpec, ViewStateSpec } from '../util/url'
+import { DiffPart } from '@sourcegraph/codeintellify'
+import { isObject } from 'lodash'
+import { hasProperty } from '../util/types'
+import { IExtensionsService } from '../api/client/services/extensionsService'
+import { ModelService } from '../api/client/services/modelService'
 
 export interface EndpointPair {
     /** The endpoint to proxy the API of the other thread from */
-    proxy: Endpoint & Pick<MessagePort, 'start'>
+    proxy: Endpoint
 
     /** The endpoint to expose the API of this thread to */
-    expose: Endpoint & Pick<MessagePort, 'start'>
+    expose: Endpoint
 }
-export const isEndpointPair = (val: any): val is EndpointPair =>
-    typeof val === 'object' && val !== null && isEndpoint(val.proxy) && isEndpoint(val.expose)
+
+export interface ClosableEndpointPair {
+    endpoints: EndpointPair
+
+    /** Destroys worker or iframe depending on the environment. */
+    subscription: Subscription
+}
+
+const isEndpoint = (value: unknown): value is Endpoint =>
+    isObject(value) &&
+    hasProperty('addEventListener')(value) &&
+    hasProperty('removeEventListener')(value) &&
+    hasProperty('postMessage')(value) &&
+    typeof value.addEventListener === 'function' &&
+    typeof value.removeEventListener === 'function' &&
+    typeof value.postMessage === 'function'
+
+export const isEndpointPair = (value: unknown): value is EndpointPair =>
+    isObject(value) &&
+    hasProperty('proxy')(value) &&
+    hasProperty('expose')(value) &&
+    isEndpoint(value.proxy) &&
+    isEndpoint(value.expose)
+
+/**
+ * Context information of an invocation of `urlToFile`
+ */
+export interface URLToFileContext {
+    /**
+     * If `urlToFile` is called because of a go to definition invocation on a diff,
+     * the part of the diff it was invoked on.
+     */
+    part: DiffPart | undefined
+
+    isWebURL?: boolean
+}
 
 /**
  * Platform-specific data and methods shared by multiple Sourcegraph components.
@@ -47,7 +87,7 @@ export interface PlatformContext {
      * @returns A promise that resolves after the update succeeds and {@link PlatformContext#settings} reflects the
      * update.
      */
-    updateSettings(subject: GQL.ID, edit: SettingsEdit | string): Promise<void>
+    updateSettings: (subject: GQL.ID, edit: SettingsEdit | string) => Promise<void>
 
     /**
      * Sends a request to the Sourcegraph GraphQL API and returns the response.
@@ -56,7 +96,7 @@ export interface PlatformContext {
      * could leak private information such as repository names.
      * @returns Observable that emits the result or an error if the HTTP request failed
      */
-    requestGraphQL<R extends GQL.IQuery | GQL.IMutation>(options: {
+    requestGraphQL: <R, V = object>(options: {
         /**
          * The GraphQL request (query or mutation)
          */
@@ -64,28 +104,28 @@ export interface PlatformContext {
         /**
          * An object whose properties are GraphQL query name-value variable pairs
          */
-        variables: {}
+        variables: V
         /**
          * 🚨 SECURITY: Whether or not sending the GraphQL request to Sourcegraph.com
          * could leak private information such as repository names.
          */
         mightContainPrivateInfo: boolean
-    }): Observable<GraphQLResult<R>>
+    }) => Observable<GraphQLResult<R>>
 
     /**
      * Forces the currently displayed tooltip, if any, to update its contents.
      */
-    forceUpdateTooltip(): void
+    forceUpdateTooltip: () => void
 
     /**
      * Spawns a new JavaScript execution context (such as a Web Worker or browser extension
      * background worker) with the extension host and opens a communication channel to it. It is
      * called exactly once, to start the extension host.
      *
-     * @returns An observable that emits at most once with the message transports for communicating
+     * @returns A promise of the message transports for communicating
      * with the execution context (using, e.g., postMessage/onmessage) when it is ready.
      */
-    createExtensionHost(): Observable<EndpointPair>
+    createExtensionHost: () => Promise<ClosableEndpointPair>
 
     /**
      * Returns the script URL suitable for passing to importScripts for an extension's bundle.
@@ -98,17 +138,24 @@ export interface PlatformContext {
      * @returns A script URL suitable for passing to importScripts, typically either the original
      * https:// URL for the extension's bundle or a blob: URI for it.
      */
-    getScriptURLForExtension(bundleURL: string): string | Promise<string>
+    getScriptURLForExtension: (bundleURL: string) => string | Promise<string>
 
     /**
      * Constructs the URL (possibly relative or absolute) to the file with the specified options.
      *
-     * @param location The specific repository, revision, file, position, and view state to generate the URL for.
+     * @param target The specific repository, revision, file, position, and view state to generate the URL for.
+     * @param context Contextual information about the context of this invocation.
      * @returns The URL to the file with the specified options.
      */
-    urlToFile(
-        location: RepoSpec & Partial<RawRepoSpec> & RevSpec & FileSpec & Partial<PositionSpec> & Partial<ViewStateSpec>
-    ): string
+    urlToFile: (
+        target: RepoSpec &
+            Partial<RawRepoSpec> &
+            RevisionSpec &
+            FileSpec &
+            Partial<UIPositionSpec> &
+            Partial<ViewStateSpec>,
+        context: URLToFileContext
+    ) => string
 
     /**
      * The URL to the Sourcegraph site that the user's session is associated with. This refers to
@@ -140,6 +187,17 @@ export interface PlatformContext {
      * Used for extension development purposes, to run an extension that isn't on the registry.
      */
     sideloadedExtensionURL: Subscribable<string | null> & NextObserver<string | null>
+
+    /**
+     * A telemetry service implementation to log events.
+     * Optional because it's currently only used in the web app platform.
+     */
+    telemetryService?: TelemetryService
+
+    /**
+     * Creates an extensions service that provides the list of extensions to be activated.
+     */
+    createExtensionsService?(modelService: Pick<ModelService, 'activeLanguages'>): IExtensionsService
 }
 
 /**

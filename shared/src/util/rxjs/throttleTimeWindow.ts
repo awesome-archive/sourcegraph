@@ -1,3 +1,4 @@
+/* eslint-disable rxjs/no-subclass */
 /* eslint-disable @typescript-eslint/no-use-before-define */
 import {
     asyncScheduler,
@@ -119,8 +120,8 @@ interface DispatchArg<T> {
     subscriber: ThrottleTimeWindowSubscriber<T>
 }
 
-function dispatchNext<T>(arg: DispatchArg<T> | undefined): void {
-    if (arg) {
-        arg.subscriber.clearThrottle()
+function dispatchNext<T>(argument: DispatchArg<T> | undefined): void {
+    if (argument) {
+        argument.subscriber.clearThrottle()
     }
 }

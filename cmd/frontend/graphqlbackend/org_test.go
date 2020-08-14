@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/graph-gophers/graphql-go/gqltesting"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
+	"github.com/sourcegraph/sourcegraph/internal/db"
 )
 
 func TestOrganization(t *testing.T) {
@@ -17,7 +17,7 @@ func TestOrganization(t *testing.T) {
 
 	gqltesting.RunTests(t, []*gqltesting.Test{
 		{
-			Schema: GraphQLSchema,
+			Schema: mustParseGraphQLSchema(t),
 			Query: `
 				{
 					organization(name: "acme") {
@@ -42,7 +42,7 @@ func TestNode_Org(t *testing.T) {
 
 	gqltesting.RunTests(t, []*gqltesting.Test{
 		{
-			Schema: GraphQLSchema,
+			Schema: mustParseGraphQLSchema(t),
 			Query: `
 				{
 					node(id: "T3JnOjE=") {

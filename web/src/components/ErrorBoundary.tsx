@@ -1,9 +1,9 @@
 import * as sentry from '@sentry/browser'
-import H from 'history'
+import * as H from 'history'
 import ErrorIcon from 'mdi-react/ErrorIcon'
 import ReloadIcon from 'mdi-react/ReloadIcon'
 import React from 'react'
-import { asError } from '../../../shared/src/util/errors'
+import { asError, isErrorLike } from '../../../shared/src/util/errors'
 import { HeroPage } from './HeroPage'
 
 interface Props {
@@ -41,8 +41,8 @@ export class ErrorBoundary extends React.PureComponent<Props, State> {
         })
     }
 
-    public componentDidUpdate(prevProps: Props): void {
-        if (prevProps.location !== this.props.location) {
+    public componentDidUpdate(previousProps: Props): void {
+        if (previousProps.location !== this.props.location) {
             // Reset error state when location changes, so that the user can try navigating to a different page to
             // clear the error.
             /* eslint react/no-did-update-set-state: warn */
@@ -94,11 +94,11 @@ export class ErrorBoundary extends React.PureComponent<Props, State> {
         return this.props.children
     }
 
-    private onReloadClick: React.MouseEventHandler<HTMLElement> = e => {
+    private onReloadClick: React.MouseEventHandler<HTMLElement> = () => {
         window.location.reload(true) // hard page reload
     }
 }
 
-function isWebpackChunkError(err: any): boolean {
-    return typeof err.request === 'string' && err.message.startsWith('Loading chunk')
+function isWebpackChunkError(value: unknown): boolean {
+    return isErrorLike(value) && value.name === 'ChunkLoadError'
 }

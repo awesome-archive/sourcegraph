@@ -3,26 +3,27 @@ import * as React from 'react'
 import { Link } from 'react-router-dom'
 import { Observable } from 'rxjs'
 import { map } from 'rxjs/operators'
-import { CircleChevronLeftIcon } from '../../../shared/src/components/icons' // TODO: Switch to mdi icon
+import { CircleChevronLeftIcon } from '../../../shared/src/components/icons'
 import { TabsWithLocalStorageViewStatePersistence } from '../../../shared/src/components/Tabs'
-import { gql } from '../../../shared/src/graphql/graphql'
+import { gql, dataOrThrowErrors } from '../../../shared/src/graphql/graphql'
 import * as GQL from '../../../shared/src/graphql/schema'
-import { createAggregateError } from '../../../shared/src/util/errors'
 import { memoizeObservable } from '../../../shared/src/util/memoizeObservable'
 import { queryGraphQL } from '../backend/graphql'
 import { FilteredConnection, FilteredConnectionQueryArgs } from '../components/FilteredConnection'
 import { eventLogger } from '../tracking/eventLogger'
 import { replaceRevisionInURL } from '../util/url'
-import { GitRefNode, queryGitRefs } from './GitRef'
+import { GitReferenceNode, queryGitReferences } from './GitReference'
+import { RevisionSpec } from '../../../shared/src/util/url'
 
 const fetchRepositoryCommits = memoizeObservable(
-    (args: { repo: GQL.ID; rev?: string; first?: number; query?: string }): Observable<GQL.IGitCommitConnection> =>
+    (args: RevisionSpec & { repo: GQL.ID; first?: number; query?: string }): Observable<GQL.IGitCommitConnection> =>
         queryGraphQL(
             gql`
-                query RepositoryGitCommit($repo: ID!, $first: Int, $rev: String!, $query: String) {
+                query RepositoryGitCommit($repo: ID!, $first: Int, $revision: String!, $query: String) {
                     node(id: $repo) {
+                        __typename
                         ... on Repository {
-                            commit(rev: $rev) {
+                            commit(rev: $revision) {
                                 ancestors(first: $first, query: $query) {
                                     nodes {
                                         id
@@ -48,47 +49,49 @@ const fetchRepositoryCommits = memoizeObservable(
             `,
             args
         ).pipe(
-            map(({ data, errors }) => {
-                if (
-                    !data ||
-                    !data.node ||
-                    !(data.node as GQL.IRepository).commit ||
-                    !(data.node as GQL.IRepository).commit!.ancestors
-                ) {
-                    throw createAggregateError(errors)
+            map(dataOrThrowErrors),
+            map(({ node }) => {
+                if (!node) {
+                    throw new Error(`Repository ${args.repo} not found`)
                 }
-                return (data.node as GQL.IRepository).commit!.ancestors
+                if (node.__typename !== 'Repository') {
+                    throw new Error(`Node is a ${node.__typename}, not a Repository`)
+                }
+                if (!node.commit?.ancestors) {
+                    throw new Error(`Cannot load ancestors for repository ${args.repo}`)
+                }
+                return node.commit.ancestors
             })
         ),
-    x => JSON.stringify(x)
+    args => JSON.stringify(args)
 )
 
 interface GitRefPopoverNodeProps {
     node: GQL.IGitRef
 
-    defaultBranch: string | undefined
-    currentRev: string | undefined
+    defaultBranch: string
+    currentRevision: string | undefined
 
     location: H.Location
 }
 
-const GitRefPopoverNode: React.FunctionComponent<GitRefPopoverNodeProps> = ({
+const GitReferencePopoverNode: React.FunctionComponent<GitRefPopoverNodeProps> = ({
     node,
     defaultBranch,
-    currentRev,
+    currentRevision,
     location,
 }) => {
     let isCurrent: boolean
-    if (currentRev) {
-        isCurrent = node.name === currentRev || node.abbrevName === currentRev
+    if (currentRevision) {
+        isCurrent = node.name === currentRevision || node.abbrevName === currentRevision
     } else {
         isCurrent = node.name === `refs/heads/${defaultBranch}`
     }
     return (
-        <GitRefNode
+        <GitReferenceNode
             node={node}
             url={replaceRevisionInURL(location.pathname + location.search + location.hash, node.abbrevName)}
-            rootIsLink={true}
+            ancestorIsLink={false}
         >
             {isCurrent && (
                 <CircleChevronLeftIcon
@@ -96,7 +99,7 @@ const GitRefPopoverNode: React.FunctionComponent<GitRefPopoverNodeProps> = ({
                     data-tooltip="Current"
                 />
             )}
-        </GitRefNode>
+        </GitReferenceNode>
     )
 }
 
@@ -109,11 +112,11 @@ interface GitCommitNodeProps {
 }
 
 const GitCommitNode: React.FunctionComponent<GitCommitNodeProps> = ({ node, currentCommitID, location }) => {
-    const isCurrent = currentCommitID === (node.oid as string)
+    const isCurrent = currentCommitID === node.oid
     return (
         <li key={node.oid} className="connection-popover__node revisions-popover-git-commit-node">
             <Link
-                to={replaceRevisionInURL(location.pathname + location.search + location.hash, node.oid as string)}
+                to={replaceRevisionInURL(location.pathname + location.search + location.hash, node.oid)}
                 className={`connection-popover__node-link ${
                     isCurrent ? 'connection-popover__node-link--active' : ''
                 } revisions-popover-git-commit-node__link`}
@@ -136,7 +139,7 @@ const GitCommitNode: React.FunctionComponent<GitCommitNodeProps> = ({ node, curr
 interface Props {
     repo: GQL.ID
     repoName: string
-    defaultBranch: string | undefined
+    defaultBranch: string
 
     /** The current revision, or undefined for the default branch. */
     currentRev: string | undefined
@@ -156,16 +159,6 @@ interface RevisionsPopoverTab {
     pluralNoun: string
     type?: GQL.GitRefType
 }
-
-class FilteredGitRefConnection extends FilteredConnection<
-    GQL.IGitRef,
-    Pick<GitRefPopoverNodeProps, 'defaultBranch' | 'currentRev' | 'location'>
-> {}
-
-class FilteredGitCommitConnection extends FilteredConnection<
-    GQL.IGitCommit,
-    Pick<GitCommitNodeProps, 'currentCommitID' | 'location'>
-> {}
 
 /**
  * A popover that displays a searchable list of revisions (grouped by type) for
@@ -192,9 +185,9 @@ export class RevisionsPopover extends React.PureComponent<Props> {
                     storageKey={RevisionsPopover.LAST_TAB_STORAGE_KEY}
                     className="revisions-popover__tabs"
                 >
-                    {RevisionsPopover.TABS.map((tab, i) =>
+                    {RevisionsPopover.TABS.map(tab =>
                         tab.type ? (
-                            <FilteredGitRefConnection
+                            <FilteredConnection<GQL.IGitRef, Omit<GitRefPopoverNodeProps, 'node'>>
                                 key={tab.id}
                                 className="connection-popover__content"
                                 showMoreClassName="connection-popover__show-more"
@@ -204,23 +197,21 @@ export class RevisionsPopover extends React.PureComponent<Props> {
                                 queryConnection={
                                     tab.type === GQL.GitRefType.GIT_BRANCH ? this.queryGitBranches : this.queryGitTags
                                 }
-                                nodeComponent={GitRefPopoverNode}
-                                nodeComponentProps={
-                                    {
-                                        defaultBranch: this.props.defaultBranch,
-                                        currentRev: this.props.currentRev,
-                                        location: this.props.location,
-                                    } as Pick<GitRefPopoverNodeProps, 'defaultBranch' | 'currentRev' | 'location'>
-                                }
+                                nodeComponent={GitReferencePopoverNode}
+                                nodeComponentProps={{
+                                    defaultBranch: this.props.defaultBranch,
+                                    currentRevision: this.props.currentRev,
+                                    location: this.props.location,
+                                }}
                                 defaultFirst={50}
                                 autoFocus={true}
                                 noSummaryIfAllNodesVisible={true}
-                                shouldUpdateURLQuery={false}
+                                useURLQuery={false}
                                 history={this.props.history}
                                 location={this.props.location}
                             />
                         ) : (
-                            <FilteredGitCommitConnection
+                            <FilteredConnection<GQL.IGitCommit, Omit<GitCommitNodeProps, 'node'>>
                                 key={tab.id}
                                 className="connection-popover__content"
                                 compact={true}
@@ -228,18 +219,16 @@ export class RevisionsPopover extends React.PureComponent<Props> {
                                 pluralNoun={tab.pluralNoun}
                                 queryConnection={this.queryRepositoryCommits}
                                 nodeComponent={GitCommitNode}
-                                nodeComponentProps={
-                                    {
-                                        currentCommitID: this.props.currentCommitID,
-                                        location: this.props.location,
-                                    } as Pick<GitCommitNodeProps, 'currentCommitID' | 'location'>
-                                }
+                                nodeComponentProps={{
+                                    currentCommitID: this.props.currentCommitID,
+                                    location: this.props.location,
+                                }}
                                 defaultFirst={15}
                                 autoFocus={true}
                                 history={this.props.history}
                                 location={this.props.location}
                                 noSummaryIfAllNodesVisible={true}
-                                shouldUpdateURLQuery={false}
+                                useURLQuery={false}
                             />
                         )
                     )}
@@ -249,15 +238,15 @@ export class RevisionsPopover extends React.PureComponent<Props> {
     }
 
     private queryGitBranches = (args: FilteredConnectionQueryArgs): Observable<GQL.IGitRefConnection> =>
-        queryGitRefs({ ...args, repo: this.props.repo, type: GQL.GitRefType.GIT_BRANCH, withBehindAhead: false })
+        queryGitReferences({ ...args, repo: this.props.repo, type: GQL.GitRefType.GIT_BRANCH, withBehindAhead: false })
 
     private queryGitTags = (args: FilteredConnectionQueryArgs): Observable<GQL.IGitRefConnection> =>
-        queryGitRefs({ ...args, repo: this.props.repo, type: GQL.GitRefType.GIT_TAG, withBehindAhead: false })
+        queryGitReferences({ ...args, repo: this.props.repo, type: GQL.GitRefType.GIT_TAG, withBehindAhead: false })
 
     private queryRepositoryCommits = (args: FilteredConnectionQueryArgs): Observable<GQL.IGitCommitConnection> =>
         fetchRepositoryCommits({
             ...args,
             repo: this.props.repo,
-            rev: this.props.currentRev || this.props.defaultBranch,
+            revision: this.props.currentRev || this.props.defaultBranch,
         })
 }

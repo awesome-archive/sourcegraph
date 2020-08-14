@@ -1,5 +1,4 @@
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import { upperFirst } from 'lodash'
 import AddIcon from 'mdi-react/AddIcon'
 import PuzzleIcon from 'mdi-react/PuzzleIcon'
 import * as React from 'react'
@@ -19,6 +18,8 @@ import { eventLogger } from '../../../tracking/eventLogger'
 import { RegistryExtensionNameFormGroup, RegistryPublisherFormGroup } from '../extension/RegistryExtensionForm'
 import { queryViewerRegistryPublishers } from './backend'
 import { RegistryAreaPageProps } from './RegistryArea'
+import { ErrorAlert } from '../../../components/alerts'
+import * as H from 'history'
 
 function createExtension(publisher: GQL.ID, name: string): Observable<GQL.IExtensionRegistryCreateExtensionResult> {
     return mutateGraphQL(
@@ -53,6 +54,7 @@ function createExtension(publisher: GQL.ID, name: string): Observable<GQL.IExten
 
 interface Props extends RegistryAreaPageProps, RouteComponentProps<{}> {
     authenticatedUser: GQL.IUser
+    history: H.History
 }
 
 interface State {
@@ -85,16 +87,19 @@ export const RegistryNewExtensionPage = withAuthenticatedUser(
                 concat(
                     [{ publishersOrError: 'loading' }],
                     queryViewerRegistryPublishers().pipe(
-                        map(result => ({ publishersOrError: result, publisher: result[0] && result[0].id })),
+                        map(result => ({ publishersOrError: result, publisher: result[0]?.id })),
                         catchError(error => [{ publishersOrError: asError(error) }])
                     )
-                ).subscribe(stateUpdate => this.setState(stateUpdate as State), err => console.error(err))
+                ).subscribe(
+                    stateUpdate => this.setState(stateUpdate as State),
+                    error => console.error(error)
+                )
             )
 
             this.subscriptions.add(
                 this.submits
                     .pipe(
-                        tap(e => e.preventDefault()),
+                        tap(event => event.preventDefault()),
                         concatMap(() =>
                             concat(
                                 [{ creationOrError: 'loading' }],
@@ -109,7 +114,10 @@ export const RegistryNewExtensionPage = withAuthenticatedUser(
                             )
                         )
                     )
-                    .subscribe(stateUpdate => this.setState(stateUpdate as State), err => console.error(err))
+                    .subscribe(
+                        stateUpdate => this.setState(stateUpdate as State),
+                        error => console.error(error)
+                    )
             )
 
             this.componentUpdates.next(this.props)
@@ -130,9 +138,9 @@ export const RegistryNewExtensionPage = withAuthenticatedUser(
                 !isErrorLike(this.state.publishersOrError) &&
                 this.state.publisher
             ) {
-                const p = this.state.publishersOrError.find(p => p.id === this.state.publisher)
-                if (p) {
-                    extensionID = toExtensionID(p, this.state.name)
+                const publisher = this.state.publishersOrError.find(publisher => publisher.id === this.state.publisher)
+                if (publisher) {
+                    extensionID = toExtensionID(publisher, this.state.name)
                 }
             }
 
@@ -149,6 +157,7 @@ export const RegistryNewExtensionPage = withAuthenticatedUser(
                                 publishersOrError={this.state.publishersOrError}
                                 onChange={this.onPublisherChange}
                                 disabled={this.state.creationOrError === 'loading'}
+                                history={this.props.history}
                             />
                             <RegistryExtensionNameFormGroup
                                 value={this.state.name}
@@ -189,21 +198,23 @@ export const RegistryNewExtensionPage = withAuthenticatedUser(
                             </button>
                         </Form>
                         {isErrorLike(this.state.creationOrError) && (
-                            <div className="alert alert-danger mt-3">
-                                {upperFirst(this.state.creationOrError.message)}
-                            </div>
+                            <ErrorAlert
+                                className="mt-3"
+                                error={this.state.creationOrError}
+                                history={this.props.history}
+                            />
                         )}
                     </ModalPage>
                 </>
             )
         }
 
-        private onPublisherChange: React.ChangeEventHandler<HTMLSelectElement> = e =>
-            this.setState({ publisher: e.currentTarget.value })
+        private onPublisherChange: React.ChangeEventHandler<HTMLSelectElement> = event =>
+            this.setState({ publisher: event.currentTarget.value })
 
-        private onNameChange: React.ChangeEventHandler<HTMLInputElement> = e =>
-            this.setState({ name: e.currentTarget.value })
+        private onNameChange: React.ChangeEventHandler<HTMLInputElement> = event =>
+            this.setState({ name: event.currentTarget.value })
 
-        private onSubmit: React.FormEventHandler<HTMLFormElement> = e => this.submits.next(e)
+        private onSubmit: React.FormEventHandler<HTMLFormElement> = event => this.submits.next(event)
     }
 )

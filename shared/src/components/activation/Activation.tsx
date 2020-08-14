@@ -1,5 +1,4 @@
-import H from 'history'
-import { LinkProps } from '../Link'
+import * as H from 'history'
 
 type ActivationID = 'ConnectedCodeHost' | 'EnabledRepository' | 'DidSearch' | 'FoundReferences' | 'EnabledSharing'
 
@@ -57,13 +56,7 @@ export interface ActivationStep {
     /**
      * Description of the step displayed in a popover
      */
-    detail: string
-
-    /**
-     * If set, the user should be navigated to the given link when
-     * attempting to complete this step.
-     */
-    link?: LinkProps
+    detail: React.ReactNode
 
     /**
      * If set, the handler should be invoked when the user attempts
@@ -79,6 +72,6 @@ export const percentageDone = (info?: ActivationCompletionStatus): number => {
     if (!info) {
         return 0
     }
-    const vals = Object.values(info)
-    return (100 * vals.filter(e => e).length) / vals.length
+    const values = Object.values(info)
+    return (100 * values.filter(done => done).length) / values.length
 }

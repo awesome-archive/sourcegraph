@@ -1,5 +1,4 @@
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import { upperFirst } from 'lodash'
 import AlertCircleIcon from 'mdi-react/AlertCircleIcon'
 import * as React from 'react'
 import { RouteComponentProps } from 'react-router'
@@ -19,6 +18,8 @@ import { ExtensionAreaRouteContext } from '../../../extensions/extension/Extensi
 import { eventLogger } from '../../../tracking/eventLogger'
 import { RegistryExtensionDeleteButton } from './RegistryExtensionDeleteButton'
 import { RegistryExtensionNameFormGroup, RegistryPublisherFormGroup } from './RegistryExtensionForm'
+import { ErrorAlert } from '../../../components/alerts'
+import * as H from 'history'
 
 function updateExtension(
     args: Pick<
@@ -56,6 +57,7 @@ function updateExtension(
 
 interface Props extends ExtensionAreaRouteContext, RouteComponentProps<{}> {
     authenticatedUser: GQL.IUser
+    history: H.History
 }
 
 interface State {
@@ -80,7 +82,7 @@ export const RegistryExtensionManagePage = withAuthenticatedUser(
             this.subscriptions.add(
                 this.submits
                     .pipe(
-                        tap(e => e.preventDefault()),
+                        tap(event => event.preventDefault()),
                         concatMap(() =>
                             concat(
                                 [{ updateOrError: 'loading' }],
@@ -101,7 +103,10 @@ export const RegistryExtensionManagePage = withAuthenticatedUser(
                             )
                         )
                     )
-                    .subscribe(stateUpdate => this.setState(stateUpdate as State), err => console.error(err))
+                    .subscribe(
+                        stateUpdate => this.setState(stateUpdate as State),
+                        error => console.error(error)
+                    )
             )
 
             this.componentUpdates.next(this.props)
@@ -149,6 +154,7 @@ export const RegistryExtensionManagePage = withAuthenticatedUser(
                             value={publisher.id}
                             publishersOrError={[publisher]}
                             disabled={true}
+                            history={this.props.history}
                         />
                         <RegistryExtensionNameFormGroup
                             className="registry-extension-manage-page__input"
@@ -179,7 +185,7 @@ export const RegistryExtensionManagePage = withAuthenticatedUser(
                         </button>
                     </Form>
                     {isErrorLike(this.state.updateOrError) && (
-                        <div className="alert alert-danger">{upperFirst(this.state.updateOrError.message)}</div>
+                        <ErrorAlert error={this.state.updateOrError} history={this.props.history} />
                     )}
                     <div className="card mt-5 registry-extension-manage-page__other-actions">
                         <div className="card-header">Other actions</div>
@@ -200,12 +206,12 @@ export const RegistryExtensionManagePage = withAuthenticatedUser(
             )
         }
 
-        private onNameChange: React.ChangeEventHandler<HTMLInputElement> = e =>
-            this.setState({ name: e.currentTarget.value })
+        private onNameChange: React.ChangeEventHandler<HTMLInputElement> = event =>
+            this.setState({ name: event.currentTarget.value })
 
-        private onSubmit: React.FormEventHandler<HTMLFormElement> = e => this.submits.next(e)
+        private onSubmit: React.FormEventHandler<HTMLFormElement> = event => this.submits.next(event)
 
-        private onDidDelete = () => {
+        private onDidDelete = (): void => {
             this.props.history.push('/extensions')
             this.props.onDidUpdateExtension()
         }

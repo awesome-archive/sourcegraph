@@ -8,6 +8,7 @@ import { filter } from 'rxjs/operators'
  * "storage" event per the Web Storage API specification). To emit for changes in the same window, call
  * {@link LocalStorageSubject#next}.
  */
+// eslint-disable-next-line rxjs/no-subclass
 export class LocalStorageSubject<T> extends Observable<T>
     implements NextObserver<T>, Pick<BehaviorSubject<T>, 'value'> {
     constructor(private key: string, private defaultValue: T) {
@@ -22,10 +23,10 @@ export class LocalStorageSubject<T> extends Observable<T>
     }
 
     public next(value: T): void {
-        const v = JSON.stringify(value)
-        localStorage.setItem(this.key, v)
+        const json = JSON.stringify(value)
+        localStorage.setItem(this.key, json)
         // Does not set oldValue or other StorageEventInit keys because we don't need them.
-        window.dispatchEvent(new StorageEvent('storage', { key: this.key, newValue: v }))
+        window.dispatchEvent(new StorageEvent('storage', { key: this.key, newValue: json }))
     }
 
     public get value(): T {
@@ -33,13 +34,13 @@ export class LocalStorageSubject<T> extends Observable<T>
     }
 }
 
-function parseValue<T>(v: string | null, defaultValue: T): T {
-    if (v === null) {
+function parseValue<T>(value: string | null, defaultValue: T): T {
+    if (value === null) {
         return defaultValue
     }
     try {
-        return JSON.parse(v)
-    } catch (err) {
+        return JSON.parse(value) as T
+    } catch {
         return defaultValue
     }
 }

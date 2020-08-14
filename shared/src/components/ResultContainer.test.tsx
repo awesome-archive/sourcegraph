@@ -1,24 +1,19 @@
 import * as H from 'history'
 import FileIcon from 'mdi-react/FileIcon'
 import * as React from 'react'
-import { cleanup, fireEvent, getByTestId, getByText, render } from 'react-testing-library'
+import { cleanup, fireEvent, getByTestId, getByText, render } from '@testing-library/react'
 import sinon from 'sinon'
-import {
-    HIGHLIGHTED_FILE_LINES_SIMPLE_REQUEST,
-    MULTIPLE_MATCH_RESULT,
-    NOOP_SETTINGS_CASCADE,
-} from '../../../web/src/search/testHelpers'
 import { FileMatchChildren } from './FileMatchChildren'
-import { setLinkComponent } from './Link'
 import { RepoFileLink } from './RepoFileLink'
 import { ResultContainer } from './ResultContainer'
+import {
+    MULTIPLE_MATCH_RESULT,
+    HIGHLIGHTED_FILE_LINES_SIMPLE_REQUEST,
+    NOOP_SETTINGS_CASCADE,
+} from '../util/searchTestHelpers'
 
 describe('ResultContainer', () => {
-    setLinkComponent((props: any) => <a {...props} />)
-    afterAll(() => {
-        setLinkComponent(() => null as any)
-        cleanup()
-    })
+    afterAll(cleanup)
 
     const history = H.createBrowserHistory()
     history.replace({ pathname: '/search' })
@@ -84,7 +79,7 @@ describe('ResultContainer', () => {
         allExpanded: false,
     }
 
-    const findRefsProps = {
+    const findReferencesProps = {
         location: history.location,
         collapsible: true,
         defaultExpanded: true,
@@ -143,14 +138,14 @@ describe('ResultContainer', () => {
     })
 
     it('displays all results by default, when allExpanded is true', () => {
-        const { container } = render(<ResultContainer {...findRefsProps} />)
+        const { container } = render(<ResultContainer {...findReferencesProps} />)
 
         const expandedItems = container.querySelectorAll('.file-match-children__item')
         expect(expandedItems.length).toBe(5)
     })
 
     it('collapses to show no results when the header is clicked, when allExpanded is true', () => {
-        const { container } = render(<ResultContainer {...findRefsProps} />)
+        const { container } = render(<ResultContainer {...findReferencesProps} />)
 
         let expandedItems = container.querySelectorAll('.file-match-children__item')
         expect(expandedItems.length).toBe(5)

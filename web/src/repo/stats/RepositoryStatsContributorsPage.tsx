@@ -14,9 +14,9 @@ import { FilteredConnection } from '../../components/FilteredConnection'
 import { Form } from '../../components/Form'
 import { PageTitle } from '../../components/PageTitle'
 import { Timestamp } from '../../components/time/Timestamp'
-import { quoteIfNeeded, searchQueryForRepoRev } from '../../search'
+import { PersonLink } from '../../person/PersonLink'
+import { quoteIfNeeded, searchQueryForRepoRevision, PatternTypeProps } from '../../search'
 import { eventLogger } from '../../tracking/eventLogger'
-import { PersonLink } from '../../user/PersonLink'
 import { UserAvatar } from '../../user/UserAvatar'
 import { RepositoryStatsAreaPageProps } from './RepositoryStatsArea'
 
@@ -26,9 +26,10 @@ interface QuerySpec {
     path: string | null
 }
 
-interface RepositoryContributorNodeProps extends QuerySpec {
+interface RepositoryContributorNodeProps extends QuerySpec, Omit<PatternTypeProps, 'setPatternType'> {
     node: GQL.IRepositoryContributor
     repoName: string
+    globbing: boolean
 }
 
 const RepositoryContributorNode: React.FunctionComponent<RepositoryContributorNodeProps> = ({
@@ -37,11 +38,13 @@ const RepositoryContributorNode: React.FunctionComponent<RepositoryContributorNo
     revisionRange,
     after,
     path,
+    patternType,
+    globbing,
 }) => {
     const commit = node.commits.nodes[0] as GQL.IGitCommit | undefined
 
     const query: string = [
-        searchQueryForRepoRev(repoName),
+        searchQueryForRepoRevision(repoName, globbing),
         'type:diff',
         `author:${quoteIfNeeded(node.person.email)}`,
         after ? `after:${quoteIfNeeded(after)}` : '',
@@ -54,7 +57,7 @@ const RepositoryContributorNode: React.FunctionComponent<RepositoryContributorNo
         <div className="repository-contributor-node list-group-item py-2">
             <div className="repository-contributor-node__person">
                 <UserAvatar className="icon-inline mr-2" user={node.person} />
-                <PersonLink userClassName="font-weight-bold" user={node.person.user || node.person.displayName} />
+                <PersonLink userClassName="font-weight-bold" person={node.person} />
             </div>
             <div className="repository-contributor-node__commits">
                 <div className="repository-contributor-node__commit">
@@ -73,11 +76,10 @@ const RepositoryContributorNode: React.FunctionComponent<RepositoryContributorNo
                 </div>
                 <div className="repository-contributor-node__count">
                     <Link
-                        to={`/search?${buildSearchURLQuery(query)}`}
+                        to={`/search?${buildSearchURLQuery(query, patternType, false)}`}
                         className="font-weight-bold"
                         data-tooltip={
-                            revisionRange &&
-                            revisionRange.includes('..') &&
+                            revisionRange?.includes('..') &&
                             'All commits will be shown (revision end ranges are not yet supported)'
                         }
                     >
@@ -151,14 +153,22 @@ const queryRepositoryContributors = memoizeObservable(
                 return (data.node as GQL.IRepository).contributors
             })
         ),
-    args => `${args.repo}:${args.first}:${args.revisionRange}:${args.after}:${args.path}`
+    args =>
+        `${args.repo}:${String(args.first)}:${String(args.revisionRange)}:${String(args.after)}:${String(args.path)}`
 )
 
-interface Props extends RepositoryStatsAreaPageProps, RouteComponentProps<{}> {}
+const equalOrEmpty = (a: string | null, b: string | null): boolean => a === b || (!a && !b)
+
+interface Props
+    extends RepositoryStatsAreaPageProps,
+        RouteComponentProps<{}>,
+        Omit<PatternTypeProps, 'setPatternType'> {
+    globbing: boolean
+}
 
 class FilteredContributorsConnection extends FilteredConnection<
     GQL.IRepositoryContributor,
-    Pick<RepositoryContributorNodeProps, 'repoName' | 'revisionRange' | 'after' | 'path'>
+    Pick<RepositoryContributorNodeProps, 'repoName' | 'revisionRange' | 'after' | 'path' | 'patternType' | 'globbing'>
 > {}
 
 interface State extends QuerySpec {}
@@ -177,10 +187,10 @@ export class RepositoryStatsContributorsPage extends React.PureComponent<Props, 
         eventLogger.logViewEvent('RepositoryStatsContributors')
     }
 
-    public componentDidUpdate(prevProps: Props): void {
+    public componentDidUpdate(previousProps: Props): void {
         const spec = this.getDerivedProps(this.props.location)
-        const prevSpec = this.getDerivedProps(prevProps.location)
-        if (!isEqual(spec, prevSpec)) {
+        const previousSpec = this.getDerivedProps(previousProps.location)
+        if (!isEqual(spec, previousSpec)) {
             eventLogger.log('RepositoryStatsContributorsPropsUpdated')
             // eslint-disable-next-line react/no-did-update-set-state
             this.setState(spec)
@@ -201,7 +211,6 @@ export class RepositoryStatsContributorsPage extends React.PureComponent<Props, 
 
         // Whether the user has entered new option values that differ from what's in the URL query and has not yet
         // submitted the form.
-        const equalOrEmpty = (a: string | null, b: string | null): boolean => a === b || (!a && !b)
         const stateDiffers =
             !equalOrEmpty(this.state.revisionRange, revisionRange) ||
             !equalOrEmpty(this.state.after, after) ||
@@ -348,10 +357,12 @@ export class RepositoryStatsContributorsPage extends React.PureComponent<Props, 
                         revisionRange,
                         after,
                         path,
+                        patternType: this.props.patternType,
+                        globbing: this.props.globbing,
                     }}
                     defaultFirst={20}
                     hideSearch={true}
-                    shouldUpdateURLQuery={false}
+                    useURLQuery={false}
                     updates={this.specChanges}
                     history={this.props.history}
                     location={this.props.location}
@@ -360,33 +371,35 @@ export class RepositoryStatsContributorsPage extends React.PureComponent<Props, 
         )
     }
 
-    private onChange: React.ChangeEventHandler<HTMLInputElement> = e => {
-        switch (e.currentTarget.id) {
+    private onChange: React.ChangeEventHandler<HTMLInputElement> = event => {
+        switch (event.currentTarget.id) {
             case RepositoryStatsContributorsPage.REVISION_RANGE_INPUT_ID:
-                this.setState({ revisionRange: e.currentTarget.value })
+                this.setState({ revisionRange: event.currentTarget.value })
                 return
 
             case RepositoryStatsContributorsPage.AFTER_INPUT_ID:
-                this.setState({ after: e.currentTarget.value })
+                this.setState({ after: event.currentTarget.value })
                 return
 
             case RepositoryStatsContributorsPage.PATH_INPUT_ID:
-                this.setState({ path: e.currentTarget.value })
+                this.setState({ path: event.currentTarget.value })
                 return
         }
     }
 
-    private onSubmit: React.FormEventHandler<HTMLFormElement> = e => {
-        e.preventDefault()
+    private onSubmit: React.FormEventHandler<HTMLFormElement> = event => {
+        event.preventDefault()
         this.props.history.push({ search: this.urlQuery(this.state) })
     }
 
-    private onCancel: React.MouseEventHandler<HTMLButtonElement> = e => {
-        e.preventDefault()
+    private onCancel: React.MouseEventHandler<HTMLButtonElement> = event => {
+        event.preventDefault()
         this.setState(this.getDerivedProps())
     }
 
-    private queryRepositoryContributors = (args: { first?: number }) => {
+    private queryRepositoryContributors = (args: {
+        first?: number
+    }): Observable<GQL.IRepositoryContributorConnection> => {
         const { revisionRange, after, path } = this.getDerivedProps()
         return queryRepositoryContributors({
             ...args,

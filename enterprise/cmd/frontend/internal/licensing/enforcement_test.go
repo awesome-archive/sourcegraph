@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/sourcegraph/sourcegraph/enterprise/pkg/license"
+	"github.com/sourcegraph/sourcegraph/enterprise/internal/license"
 )
 
 func TestEnforcementPreCreateUser(t *testing.T) {
@@ -73,7 +73,7 @@ func TestEnforcementPreCreateUser(t *testing.T) {
 			defer func() { MockGetConfiguredProductLicenseInfo = nil }()
 			store := fakeStore{count: test.activeUserCount}
 			err := NewPreCreateUserHook(store)(context.Background())
-			if gotErr := (err != nil); gotErr != test.wantErr {
+			if gotErr := err != nil; gotErr != test.wantErr {
 				t.Errorf("got error %v, want %v", gotErr, test.wantErr)
 			}
 		})

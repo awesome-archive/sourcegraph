@@ -5,19 +5,18 @@ import (
 	"net/url"
 	"strings"
 
-	log15 "gopkg.in/inconshreveable/log15.v2"
-
+	"github.com/inconshreveable/log15"
 	"github.com/pkg/errors"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/github"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/gitlab"
-	"github.com/sourcegraph/sourcegraph/pkg/gitserver"
-	"github.com/sourcegraph/sourcegraph/pkg/repoupdater"
-	"github.com/sourcegraph/sourcegraph/pkg/repoupdater/protocol"
-	"github.com/sourcegraph/sourcegraph/pkg/vcs/git"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/errcode"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver"
+	"github.com/sourcegraph/sourcegraph/internal/repoupdater"
+	"github.com/sourcegraph/sourcegraph/internal/repoupdater/protocol"
+	"github.com/sourcegraph/sourcegraph/internal/vcs/git"
 )
 
 // CachedGitRepo returns a handle to the Git repository that does not know the remote URL. If
@@ -53,7 +52,7 @@ func GitRepo(ctx context.Context, repo *types.Repo) (gitserver.Repo, error) {
 		return gitserver.Repo{Name: repo.Name}, err
 	}
 	if result.Repo == nil {
-		return gitserver.Repo{Name: repo.Name}, repoupdater.ErrNotFound
+		return gitserver.Repo{Name: repo.Name}, &repoupdater.ErrNotFound{Repo: repo.Name, IsNotFound: true}
 	}
 	return gitserver.Repo{Name: result.Repo.Name, URL: result.Repo.VCS.URL}, nil
 }
@@ -68,9 +67,9 @@ func quickGitserverRepo(ctx context.Context, repo api.RepoName, serviceType stri
 	lowerRepo := strings.ToLower(string(repo))
 	var hasToken func(context.Context) (bool, error)
 	switch {
-	case serviceType == github.ServiceType && strings.HasPrefix(lowerRepo, "github.com/"):
+	case serviceType == extsvc.TypeGitHub && strings.HasPrefix(lowerRepo, "github.com/"):
 		hasToken = hasGitHubDotComToken
-	case serviceType == gitlab.ServiceType && strings.HasPrefix(lowerRepo, "gitlab.com/"):
+	case serviceType == extsvc.TypeGitLab && strings.HasPrefix(lowerRepo, "gitlab.com/"):
 		hasToken = hasGitLabDotComToken
 	default:
 		return nil, nil
@@ -165,7 +164,7 @@ func (s *repos) ResolveRev(ctx context.Context, repo *types.Repo, rev string) (c
 		}
 		return grepo.URL, nil
 	}
-	return git.ResolveRevision(ctx, *gitserverRepo, remoteURLFunc, rev, nil)
+	return git.ResolveRevision(ctx, *gitserverRepo, remoteURLFunc, rev, git.ResolveRevisionOptions{})
 }
 
 func (s *repos) GetCommit(ctx context.Context, repo *types.Repo, commitID api.CommitID) (res *git.Commit, err error) {
@@ -198,22 +197,21 @@ func (s *repos) GetCommit(ctx context.Context, repo *types.Repo, commitID api.Co
 		}
 		return grepo.URL, nil
 	}
-	return git.GetCommit(ctx, *gitserverRepo, remoteURLFunc, commitID)
+	return git.GetCommit(ctx, *gitserverRepo, remoteURLFunc, commitID, git.ResolveRevisionOptions{})
 }
 
 func isIgnorableRepoUpdaterError(err error) bool {
-	err = errors.Cause(err)
-	return err == repoupdater.ErrNotFound || err == repoupdater.ErrUnauthorized || err == repoupdater.ErrTemporarilyUnavailable
+	return errcode.IsNotFound(err) || errcode.IsUnauthorized(err) || errcode.IsTemporary(err)
 }
 
 func maybeLogRepoUpdaterError(repo *types.Repo, err error) {
 	var msg string
-	switch c := errors.Cause(err); c {
-	case repoupdater.ErrNotFound:
+	switch {
+	case errcode.IsNotFound(err):
 		msg = "Repository host reported a repository as not found. If this repository was deleted on its origin, the site admin must explicitly delete it on Sourcegraph."
-	case repoupdater.ErrUnauthorized:
+	case errcode.IsUnauthorized(err):
 		msg = "Repository host rejected as unauthorized an attempt to retrieve a repository's metadata. Check the repository host credentials in site configuration."
-	case repoupdater.ErrTemporarilyUnavailable:
+	case errcode.IsTemporary(err):
 		msg = "Repository host was temporarily unavailable while retrieving repository information."
 	}
 	if msg != "" {

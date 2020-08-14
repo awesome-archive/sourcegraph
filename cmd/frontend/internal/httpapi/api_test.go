@@ -2,9 +2,10 @@ package httpapi
 
 import (
 	"github.com/gorilla/mux"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/enterprise"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/httpapi/router"
-	"github.com/sourcegraph/sourcegraph/pkg/httptestutil"
-	"github.com/sourcegraph/sourcegraph/pkg/txemail"
+	"github.com/sourcegraph/sourcegraph/internal/httptestutil"
+	"github.com/sourcegraph/sourcegraph/internal/txemail"
 )
 
 func init() {
@@ -12,6 +13,14 @@ func init() {
 }
 
 func newTest() *httptestutil.Client {
-	mux := NewHandler(router.New(mux.NewRouter()))
-	return httptestutil.NewTest(mux)
+	enterpriseServices := enterprise.DefaultServices()
+
+	return httptestutil.NewTest(NewHandler(
+		router.New(mux.NewRouter()),
+		nil,
+		enterpriseServices.GitHubWebhook,
+		enterpriseServices.GitLabWebhook,
+		enterpriseServices.BitbucketServerWebhook,
+		enterpriseServices.NewCodeIntelUploadHandler,
+	))
 }

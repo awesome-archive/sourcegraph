@@ -68,7 +68,9 @@ describe('gqlToCascade', () => {
 describe('mergeSettings', () => {
     test('handles an empty array', () => expect(mergeSettings([])).toBe(null))
     test('merges multiple values', () =>
-        expect(mergeSettings<{ a?: number; b?: number } & Settings>([{ a: 1 }, { b: 2 }, { a: 3 }])).toEqual({
+        expect(
+            mergeSettings<{ a?: number; b?: number } & Settings>([{ a: 1 }, { b: 2 }, { a: 3 }])
+        ).toEqual({
             a: 3,
             b: 2,
         }))
@@ -82,6 +84,15 @@ describe('mergeSettings', () => {
         ).toEqual({
             extensions: { 'sourcegraph/cpp': false, 'sourcegraph/go': false, 'sourcegraph/typescript': true },
         }))
+    test('merges experimentalFeatures property', () =>
+        expect(
+            mergeSettings<Settings & { experimentalFeatures: { a?: boolean; b?: boolean; c?: boolean } }>([
+                { experimentalFeatures: { a: true, b: true } },
+                { experimentalFeatures: { b: false, c: true } },
+            ])
+        ).toEqual({
+            experimentalFeatures: { a: true, b: false, c: true },
+        }))
     test('merges search.scopes property', () =>
         expect(
             mergeSettings<
@@ -90,13 +101,11 @@ describe('mergeSettings', () => {
                     b?: { [key: string]: { [key: string]: string }[] }
                 } & Settings
             >([
-                { 'search.scopes': [{ name: 'sample repos', value: 'repogroup:sample' }] },
                 { 'search.scopes': [{ name: 'test repos', value: 'repogroup:test' }] },
                 { 'search.scopes': [{ name: 'sourcegraph repos', value: 'repogroup:sourcegraph' }] },
             ])
         ).toEqual({
             'search.scopes': [
-                { name: 'sample repos', value: 'repogroup:sample' },
                 { name: 'test repos', value: 'repogroup:test' },
                 { name: 'sourcegraph repos', value: 'repogroup:sourcegraph' },
             ],

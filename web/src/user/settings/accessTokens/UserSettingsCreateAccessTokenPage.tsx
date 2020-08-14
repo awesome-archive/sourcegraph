@@ -1,5 +1,4 @@
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import { upperFirst } from 'lodash'
 import AddIcon from 'mdi-react/AddIcon'
 import * as React from 'react'
 import { RouteComponentProps } from 'react-router'
@@ -16,6 +15,7 @@ import { PageTitle } from '../../../components/PageTitle'
 import { SiteAdminAlert } from '../../../site-admin/SiteAdminAlert'
 import { eventLogger } from '../../../tracking/eventLogger'
 import { UserAreaRouteContext } from '../../area/UserArea'
+import { ErrorAlert } from '../../../components/alerts'
 
 function createAccessToken(user: GQL.ID, scopes: string[], note: string): Observable<GQL.ICreateAccessTokenResult> {
     return mutateGraphQL(
@@ -73,7 +73,7 @@ export class UserSettingsCreateAccessTokenPage extends React.PureComponent<Props
         this.subscriptions.add(
             this.submits
                 .pipe(
-                    tap(e => e.preventDefault()),
+                    tap(event => event.preventDefault()),
                     concatMap(() =>
                         concat(
                             [{ creationOrError: 'loading' }],
@@ -89,7 +89,10 @@ export class UserSettingsCreateAccessTokenPage extends React.PureComponent<Props
                         )
                     )
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate as State), err => console.error(err))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate as State),
+                    error => console.error(error)
+                )
         )
 
         this.componentUpdates.next(this.props)
@@ -120,7 +123,7 @@ export class UserSettingsCreateAccessTokenPage extends React.PureComponent<Props
                         <label htmlFor="user-settings-create-access-token-page__note">Token description</label>
                         <input
                             type="text"
-                            className="form-control e2e-create-access-token-description"
+                            className="form-control test-create-access-token-description"
                             id="user-settings-create-access-token-page__note"
                             onChange={this.onNoteChange}
                             required={true}
@@ -179,7 +182,7 @@ export class UserSettingsCreateAccessTokenPage extends React.PureComponent<Props
                     <button
                         type="submit"
                         disabled={this.state.creationOrError === 'loading'}
-                        className="btn btn-success e2e-create-access-token-submit"
+                        className="btn btn-success test-create-access-token-submit"
                     >
                         {this.state.creationOrError === 'loading' ? (
                             <LoadingSpinner className="icon-inline" />
@@ -189,31 +192,33 @@ export class UserSettingsCreateAccessTokenPage extends React.PureComponent<Props
                         Generate token
                     </button>
                     <Link
-                        className="btn btn-secondary ml-1 e2e-create-access-token-cancel"
-                        to={`${this.props.match.url.replace(/\/new$/, '')}}`}
+                        className="btn btn-secondary ml-1 test-create-access-token-cancel"
+                        to={this.props.match.url.replace(/\/new$/, '')}
                     >
                         Cancel
                     </Link>
                 </Form>
                 {isErrorLike(this.state.creationOrError) && (
-                    <div className="invite-form__alert alert alert-danger">
-                        Error: {upperFirst(this.state.creationOrError.message)}
-                    </div>
+                    <ErrorAlert
+                        className="invite-form__alert"
+                        error={this.state.creationOrError}
+                        history={this.props.history}
+                    />
                 )}
             </div>
         )
     }
 
-    private onNoteChange: React.ChangeEventHandler<HTMLInputElement> = e =>
-        this.setState({ note: e.currentTarget.value })
+    private onNoteChange: React.ChangeEventHandler<HTMLInputElement> = event =>
+        this.setState({ note: event.currentTarget.value })
 
-    private onScopesChange: React.ChangeEventHandler<HTMLInputElement> = e => {
-        const checked = e.currentTarget.checked
-        const value = e.currentTarget.value
-        this.setState(prevState => ({
-            scopes: checked ? [...prevState.scopes, value] : prevState.scopes.filter(s => s !== value),
+    private onScopesChange: React.ChangeEventHandler<HTMLInputElement> = event => {
+        const checked = event.currentTarget.checked
+        const value = event.currentTarget.value
+        this.setState(previousState => ({
+            scopes: checked ? [...previousState.scopes, value] : previousState.scopes.filter(scope => scope !== value),
         }))
     }
 
-    private onSubmit: React.FormEventHandler<HTMLFormElement> = e => this.submits.next(e)
+    private onSubmit: React.FormEventHandler<HTMLFormElement> = event => this.submits.next(event)
 }

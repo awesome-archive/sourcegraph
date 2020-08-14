@@ -4,26 +4,43 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/go-multierror"
+	"github.com/sourcegraph/sourcegraph/internal/lazyregexp"
 )
 
 // Config is the set of configuration parameters that determine the structure of the CI build. These
 // parameters are extracted from the build environment (branch name, commit hash, timestamp, etc.)
 type Config struct {
-	now               time.Time
-	branch            string
-	version           string
-	commit            string
-	mustIncludeCommit string
+	now     time.Time
+	branch  string
+	version string
+	commit  string
+
+	// mustIncludeCommit, if non-empty, is a list of commits at least one of which must be present
+	// in the branch. If empty, then no check is enforced.
+	mustIncludeCommit []string
+
+	// changedFiles is the list of files that have changed since the
+	// merge-base with origin/master.
+	changedFiles []string
 
 	taggedRelease       bool
 	releaseBranch       bool
 	isBextReleaseBranch bool
+	isBextNightly       bool
+	isRenovateBranch    bool
 	patch               bool
 	patchNoTest         bool
+	isQuick             bool
+	isMasterDryRun      bool
+
+	// profilingEnabled, if true, tells buildkite to print timing and resource utilization information
+	// for each command
+	profilingEnabled bool
 }
 
 func ComputeConfig() Config {
@@ -52,30 +69,68 @@ func ComputeConfig() Config {
 		version = version + "_patch"
 	}
 
+	isMasterDryRun := strings.HasPrefix(branch, "master-dry-run/")
+
+	isQuick := strings.HasPrefix(branch, "quick/")
+
+	profilingEnabled := strings.HasPrefix(branch, "enable-profiling/")
+
+	var mustIncludeCommits []string
+	if rawMustIncludeCommit := os.Getenv("MUST_INCLUDE_COMMIT"); rawMustIncludeCommit != "" {
+		mustIncludeCommits = strings.Split(rawMustIncludeCommit, ",")
+		for i := range mustIncludeCommits {
+			mustIncludeCommits[i] = strings.TrimSpace(mustIncludeCommits[i])
+		}
+	}
+
+	var changedFiles []string
+	if output, err := exec.Command("git", "diff", "--name-only", "origin/main...").Output(); err != nil {
+		panic(err)
+	} else {
+		changedFiles = strings.Split(strings.TrimSpace(string(output)), "\n")
+	}
+
 	return Config{
 		now:               now,
 		branch:            branch,
 		version:           version,
 		commit:            commit,
-		mustIncludeCommit: os.Getenv("MUST_INCLUDE_COMMIT"),
+		mustIncludeCommit: mustIncludeCommits,
+		changedFiles:      changedFiles,
 
 		taggedRelease:       taggedRelease,
-		releaseBranch:       regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(branch),
+		releaseBranch:       lazyregexp.New(`^[0-9]+\.[0-9]+$`).MatchString(branch),
 		isBextReleaseBranch: branch == "bext/release",
+		isRenovateBranch:    strings.HasPrefix(branch, "renovate/"),
 		patch:               patch,
 		patchNoTest:         patchNoTest,
+		isQuick:             isQuick,
+		isMasterDryRun:      isMasterDryRun,
+		profilingEnabled:    profilingEnabled,
+		isBextNightly:       os.Getenv("BEXT_NIGHTLY") == "true",
 	}
 }
 
 func (c Config) ensureCommit() error {
-	if c.mustIncludeCommit != "" {
-		output, err := exec.Command("git", "merge-base", "--is-ancestor", c.mustIncludeCommit, "HEAD").CombinedOutput()
-		if err != nil {
-			fmt.Printf("This branch %s at commit %s does not include commit %s.\n", c.branch, c.commit, c.mustIncludeCommit)
-			fmt.Println("Rebase onto the latest master to get the latest CI fixes.")
-			fmt.Println(string(output))
-			return err
+	if len(c.mustIncludeCommit) == 0 {
+		return nil
+	}
+
+	found := false
+	var errs error
+	for _, mustIncludeCommit := range c.mustIncludeCommit {
+		output, err := exec.Command("git", "merge-base", "--is-ancestor", mustIncludeCommit, "HEAD").CombinedOutput()
+		if err == nil {
+			found = true
+			break
 		}
+		errs = multierror.Append(errs, fmt.Errorf("%v | Output: %q", err, string(output)))
+	}
+	if !found {
+		fmt.Printf("This branch %q at commit %s does not include any of these commits: %s.\n", c.branch, c.commit, strings.Join(c.mustIncludeCommit, ", "))
+		fmt.Println("Rebase onto the latest main to get the latest CI fixes.")
+		fmt.Printf("Errors from `git merge-base --is-ancestor $COMMIT HEAD`: %s", errs.Error())
+		return errs
 	}
 	return nil
 }
@@ -85,17 +140,23 @@ func (c Config) isPR() bool {
 		!c.releaseBranch &&
 		!c.taggedRelease &&
 		c.branch != "master" &&
+		c.branch != "main" &&
 		!strings.HasPrefix(c.branch, "master-dry-run/") &&
 		!strings.HasPrefix(c.branch, "docker-images-patch/")
 }
 
-func isDocsOnly() bool {
-	output, err := exec.Command("git", "diff", "--name-only", "origin/master...").Output()
-	if err != nil {
-		panic(err)
+func (c Config) isDocsOnly() bool {
+	for _, p := range c.changedFiles {
+		if !strings.HasPrefix(p, "doc/") && p != "CHANGELOG.md" {
+			return false
+		}
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if !strings.HasPrefix(line, "doc") && line != "CHANGELOG.md" {
+	return true
+}
+
+func (c Config) isGoOnly() bool {
+	for _, p := range c.changedFiles {
+		if !strings.HasSuffix(p, ".go") {
 			return false
 		}
 	}

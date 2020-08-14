@@ -1,59 +1,49 @@
-import { Observable, of } from 'rxjs'
-import { catchError, map, mergeMap, switchMap } from 'rxjs/operators'
-import { ExtensionsControllerProps } from '../../../shared/src/extensions/controller'
+import { Observable, of, combineLatest, defer, from } from 'rxjs'
+import { catchError, map, switchMap, publishReplay, refCount } from 'rxjs/operators'
 import { dataOrThrowErrors, gql } from '../../../shared/src/graphql/graphql'
 import * as GQL from '../../../shared/src/graphql/schema'
 import { asError, createAggregateError, ErrorLike } from '../../../shared/src/util/errors'
 import { memoizeObservable } from '../../../shared/src/util/memoizeObservable'
 import { mutateGraphQL, queryGraphQL } from '../backend/graphql'
 import { USE_CODEMOD } from '../enterprise/codemod'
-
-const genericSearchResultInterfaceFields = gql`
-  __typename
-  label {
-      html
-  }
-  url
-  icon
-  detail {
-      html
-  }
-  matches {
-      url
-      body {
-          text
-          html
-      }
-      highlights {
-          line
-          character
-          length
-      }
-  }
-`
+import { SearchSuggestion } from '../../../shared/src/search/suggestions'
+import { Remote } from 'comlink'
+import { FlatExtHostAPI } from '../../../shared/src/api/contract'
+import { wrapRemoteObservable } from '../../../shared/src/api/client/api/common'
+import { DeployType } from '../jscontext'
 
 export function search(
     query: string,
-    { extensionsController }: ExtensionsControllerProps<'services'>
+    version: string,
+    patternType: GQL.SearchPatternType,
+    versionContext: string | undefined,
+    extensionHostPromise: Promise<Remote<FlatExtHostAPI>>
 ): Observable<GQL.ISearchResults | ErrorLike> {
-    /**
-     * Emits whenever a search is executed, and whenever an extension registers a query transformer.
-     */
-    return extensionsController.services.queryTransformer.transformQuery(query).pipe(
-        switchMap(query => {
-            const codemodActive = USE_CODEMOD
-                ? `... on CodemodResult {
-                ${genericSearchResultInterfaceFields}
-            }`
-                : ''
-            return queryGraphQL(
+    const transformedQuery = from(extensionHostPromise).pipe(
+        switchMap(extensionHost => wrapRemoteObservable(extensionHost.transformSearchQuery(query)))
+    )
+
+    return transformedQuery.pipe(
+        switchMap(query =>
+            queryGraphQL(
                 gql`
-                    query Search($query: String!) {
-                        search(query: $query) {
+                    query Search(
+                        $query: String!
+                        $version: SearchVersion!
+                        $patternType: SearchPatternType!
+                        $useCodemod: Boolean!
+                        $versionContext: String
+                    ) {
+                        search(
+                            query: $query
+                            version: $version
+                            patternType: $patternType
+                            versionContext: $versionContext
+                        ) {
                             results {
                                 __typename
                                 limitHit
-                                resultCount
+                                matchCount
                                 approximateResultCount
                                 missing {
                                     name
@@ -61,6 +51,7 @@ export function search(
                                 cloning {
                                     name
                                 }
+                                repositoriesCount
                                 timedout {
                                     name
                                 }
@@ -77,7 +68,29 @@ export function search(
                                     ... on Repository {
                                         id
                                         name
-                                        ${genericSearchResultInterfaceFields}
+                                        # TODO: Make this a proper fragment, blocked by https://github.com/graph-gophers/graphql-go/issues/241.
+                                        # beginning of genericSearchResultInterfaceFields inline fragment
+                                        label {
+                                            html
+                                        }
+                                        url
+                                        icon
+                                        detail {
+                                            html
+                                        }
+                                        matches {
+                                            url
+                                            body {
+                                                text
+                                                html
+                                            }
+                                            highlights {
+                                                line
+                                                character
+                                                length
+                                            }
+                                        }
+                                        # end of genericSearchResultInterfaceFields inline fragment
                                     }
                                     ... on FileMatch {
                                         file {
@@ -90,6 +103,27 @@ export function search(
                                         repository {
                                             name
                                             url
+                                        }
+                                        revSpec {
+                                            __typename
+                                            ... on GitRef {
+                                                displayName
+                                                url
+                                            }
+                                            ... on GitRevSpecExpr {
+                                                expr
+                                                object {
+                                                    commit {
+                                                        url
+                                                    }
+                                                }
+                                            }
+                                            ... on GitObject {
+                                                abbreviatedOID
+                                                commit {
+                                                    url
+                                                }
+                                            }
                                         }
                                         limitHit
                                         symbols {
@@ -105,9 +139,55 @@ export function search(
                                         }
                                     }
                                     ... on CommitSearchResult {
-                                        ${genericSearchResultInterfaceFields}
+                                        # TODO: Make this a proper fragment, blocked by https://github.com/graph-gophers/graphql-go/issues/241.
+                                        # beginning of genericSearchResultInterfaceFields inline fragment
+                                        label {
+                                            html
+                                        }
+                                        url
+                                        icon
+                                        detail {
+                                            html
+                                        }
+                                        matches {
+                                            url
+                                            body {
+                                                text
+                                                html
+                                            }
+                                            highlights {
+                                                line
+                                                character
+                                                length
+                                            }
+                                        }
+                                        # end of genericSearchResultInterfaceFields inline fragment
                                     }
-                                    ${codemodActive}
+                                    ... on CodemodResult @include(if: $useCodemod) {
+                                        # TODO: Make this a proper fragment, blocked by https://github.com/graph-gophers/graphql-go/issues/241.
+                                        # beginning of genericSearchResultInterfaceFields inline fragment
+                                        label {
+                                            html
+                                        }
+                                        url
+                                        icon
+                                        detail {
+                                            html
+                                        }
+                                        matches {
+                                            url
+                                            body {
+                                                text
+                                                html
+                                            }
+                                            highlights {
+                                                line
+                                                character
+                                                length
+                                            }
+                                        }
+                                        # end of genericSearchResultInterfaceFields inline fragment
+                                    }
                                 }
                                 alert {
                                     title
@@ -122,7 +202,7 @@ export function search(
                         }
                     }
                 `,
-                { query }
+                { query, version, patternType, versionContext, useCodemod: USE_CODEMOD }
             ).pipe(
                 map(({ data, errors }) => {
                     if (!data || !data.search || !data.search.results) {
@@ -132,79 +212,81 @@ export function search(
                 }),
                 catchError(error => [asError(error)])
             )
-        })
+        )
     )
 }
 
-export function fetchSearchResultStats(query: string): Observable<GQL.ISearchResultsStats> {
-    return queryGraphQL(
-        gql`
-            query SearchResultsStats($query: String!) {
-                search(query: $query) {
-                    stats {
-                        approximateResultCount
-                        sparkline
-                    }
-                }
+/**
+ * Repogroups to include in search suggestions.
+ *
+ * defer() is used here to avoid calling queryGraphQL in tests,
+ * which would fail when accessing window.context.xhrHeaders.
+ */
+const repogroupSuggestions = defer(() =>
+    queryGraphQL(gql`
+        query RepoGroups {
+            repoGroups {
+                __typename
+                name
             }
-        `,
-        { query }
-    ).pipe(
-        map(({ data, errors }) => {
-            if (!data || !data.search || !data.search.stats) {
-                throw createAggregateError(errors)
-            }
-            return data.search.stats
-        })
-    )
-}
+        }
+    `)
+).pipe(
+    map(dataOrThrowErrors),
+    map(({ repoGroups }) => repoGroups),
+    publishReplay(1),
+    refCount()
+)
 
-export function fetchSuggestions(query: string): Observable<GQL.SearchSuggestion> {
-    return queryGraphQL(
-        gql`
-            query SearchSuggestions($query: String!) {
-                search(query: $query) {
-                    suggestions {
-                        __typename
-                        ... on Repository {
-                            name
-                        }
-                        ... on File {
-                            path
-                            name
-                            isDirectory
-                            url
-                            repository {
+export function fetchSuggestions(query: string): Observable<SearchSuggestion[]> {
+    return combineLatest([
+        repogroupSuggestions,
+        queryGraphQL(
+            gql`
+                query SearchSuggestions($query: String!) {
+                    search(query: $query) {
+                        suggestions {
+                            __typename
+                            ... on Repository {
                                 name
                             }
-                        }
-                        ... on Symbol {
-                            name
-                            containerName
-                            url
-                            kind
-                            location {
-                                resource {
-                                    path
-                                    repository {
-                                        name
+                            ... on File {
+                                path
+                                name
+                                isDirectory
+                                url
+                                repository {
+                                    name
+                                }
+                            }
+                            ... on Symbol {
+                                name
+                                containerName
+                                url
+                                kind
+                                location {
+                                    resource {
+                                        path
+                                        repository {
+                                            name
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-        `,
-        { query }
-    ).pipe(
-        mergeMap(({ data, errors }) => {
-            if (!data || !data.search || !data.search.suggestions) {
-                throw createAggregateError(errors)
-            }
-            return data.search.suggestions
-        })
-    )
+            `,
+            { query }
+        ).pipe(
+            map(({ data, errors }) => {
+                if (!data?.search?.suggestions) {
+                    throw createAggregateError(errors)
+                }
+                return data.search.suggestions
+            })
+        ),
+    ]).pipe(map(([repogroups, dynamicSuggestions]) => [...repogroups, ...dynamicSuggestions]))
 }
 
 export function fetchReposByQuery(query: string): Observable<{ name: string; url: string }[]> {
@@ -239,8 +321,9 @@ const savedSearchFragment = gql`
         notify
         notifySlack
         query
-        userID
-        orgID
+        namespace {
+            id
+        }
         slackWebhookURL
     }
 `
@@ -275,8 +358,9 @@ export function fetchSavedSearch(id: GQL.ID): Observable<GQL.ISavedSearch> {
                         notify
                         notifySlack
                         slackWebhookURL
-                        orgID
-                        userID
+                        namespace {
+                            id
+                        }
                     }
                 }
             }
@@ -399,7 +483,7 @@ export function deleteSavedSearch(id: GQL.ID): Observable<void> {
 }
 
 export const highlightCode = memoizeObservable(
-    (ctx: {
+    (context: {
         code: string
         fuzzyLanguage: string
         disableTimeout: boolean
@@ -421,7 +505,7 @@ export const highlightCode = memoizeObservable(
                     )
                 }
             `,
-            ctx
+            context
         ).pipe(
             map(({ data, errors }) => {
                 if (!data || !data.highlightCode) {
@@ -430,7 +514,8 @@ export const highlightCode = memoizeObservable(
                 return data.highlightCode
             })
         ),
-    ctx => `${ctx.code}:${ctx.fuzzyLanguage}:${ctx.disableTimeout}:${ctx.isLightTheme}`
+    context =>
+        `${context.code}:${context.fuzzyLanguage}:${String(context.disableTimeout)}:${String(context.isLightTheme)}`
 )
 
 /**

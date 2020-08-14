@@ -4,6 +4,7 @@ import { Directory } from './Directory'
 import { TreeNode } from './Tree'
 import { TreeLayerProps } from './TreeLayer'
 import { maxEntries, SingleChildGitTree } from './util'
+import classNames from 'classnames'
 
 interface SingleChildTreeLayerProps extends TreeLayerProps {
     childrenEntries: SingleChildGitTree[]
@@ -41,9 +42,9 @@ export class SingleChildTreeLayer extends React.Component<SingleChildTreeLayerPr
         this.props.onToggleExpand(this.props.entryInfo.path, true, this.node)
     }
 
-    public componentDidUpdate(prevProps: SingleChildTreeLayerProps): void {
+    public componentDidUpdate(previousProps: SingleChildTreeLayerProps): void {
         // Reset childNodes to none if the parent path changes, so we don't have children of past visited layers in the childNodes.
-        if (prevProps.parentPath !== this.props.parentPath) {
+        if (previousProps.parentPath !== this.props.parentPath) {
             this.node.childNodes = []
         }
     }
@@ -81,7 +82,7 @@ export class SingleChildTreeLayer extends React.Component<SingleChildTreeLayerPr
                 if (parent === this.node) {
                     return true
                 }
-                parent = parent && parent.parent
+                parent = parent?.parent
             }
 
             // Update if currently selected node.
@@ -95,7 +96,7 @@ export class SingleChildTreeLayer extends React.Component<SingleChildTreeLayerPr
                 if (currentParent === this.node) {
                     return true
                 }
-                currentParent = currentParent && currentParent.parent
+                currentParent = currentParent?.parent
             }
 
             // If none of the above conditions are met, there's no need to update.
@@ -106,14 +107,12 @@ export class SingleChildTreeLayer extends React.Component<SingleChildTreeLayerPr
     }
 
     public render(): JSX.Element | null {
-        const className = [
+        const className = classNames(
             'tree__row',
             this.props.isExpanded && 'tree__row--expanded',
             this.node === this.props.activeNode && 'tree__row--active',
-            this.node === this.props.selectedNode && 'tree__row--selected',
-        ]
-            .filter(c => !!c)
-            .join(' ')
+            this.node === this.props.selectedNode && 'tree__row--selected'
+        )
 
         return (
             <div>
@@ -154,14 +153,14 @@ export class SingleChildTreeLayer extends React.Component<SingleChildTreeLayerPr
     /**
      * Non-root tree layers call this to activate a prefetch request in the root tree layer
      */
-    private invokeOnHover = (e: React.MouseEvent<HTMLElement>): void => {
+    private invokeOnHover = (event: React.MouseEvent<HTMLElement>): void => {
         if (this.props.onHover) {
-            e.stopPropagation()
+            event.stopPropagation()
             this.props.onHover(this.node.path)
         }
     }
 
-    private handleTreeClick = () => {
+    private handleTreeClick = (): void => {
         this.props.onSelect(this.node)
         const path = this.props.entryInfo ? this.props.entryInfo.path : ''
         this.props.onToggleExpand(path, !this.props.isExpanded, this.node)
@@ -172,10 +171,10 @@ export class SingleChildTreeLayer extends React.Component<SingleChildTreeLayerPr
      * that shouldn't update URL on click w/o modifier key (but should retain
      * anchor element properties, like right click "Copy link address").
      */
-    private noopRowClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-        if (!e.altKey && !e.metaKey && !e.shiftKey && !e.ctrlKey) {
-            e.preventDefault()
-            e.stopPropagation()
+    private noopRowClick = (event: React.MouseEvent<HTMLAnchorElement>): void => {
+        if (!event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey) {
+            event.preventDefault()
+            event.stopPropagation()
         }
         this.handleTreeClick()
     }
@@ -183,12 +182,12 @@ export class SingleChildTreeLayer extends React.Component<SingleChildTreeLayerPr
     /**
      * linkRowClick is the click handler for <Link>
      */
-    private linkRowClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    private linkRowClick: React.MouseEventHandler<HTMLAnchorElement> = () => {
         this.props.setActiveNode(this.node)
         this.props.onSelect(this.node)
     }
 
-    private setChildNode = (node: TreeNode, index: number) => {
+    private setChildNode = (node: TreeNode, index: number): void => {
         this.node.childNodes[index] = node
     }
 }

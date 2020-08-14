@@ -3,10 +3,9 @@ import CloseIcon from 'mdi-react/CloseIcon'
 import * as React from 'react'
 import { Observable, Subscription } from 'rxjs'
 import { map } from 'rxjs/operators'
-import { PanelViewWithComponent, ViewProviderRegistrationOptions } from '../api/client/services/view'
+import { PanelViewWithComponent, PanelViewProviderRegistrationOptions } from '../api/client/services/panelViews'
 import { ContributableMenu, ContributableViewContainer } from '../api/protocol/contribution'
 import { ExtensionsControllerProps } from '../extensions/controller'
-import { ThemeProps } from '../../../web/src/theme'
 import { ActionsNavItems } from '../actions/ActionsNavItems'
 import { ActivationProps } from '../components/activation/Activation'
 import { FetchFileCtx } from '../components/CodeExcerpt'
@@ -17,6 +16,8 @@ import { SettingsCascadeProps } from '../settings/settings'
 import { TelemetryProps } from '../telemetry/telemetryService'
 import { EmptyPanelView } from './views/EmptyPanelView'
 import { PanelView } from './views/PanelView'
+import { ThemeProps } from '../theme'
+import { VersionContextProps } from '../search/util'
 
 interface Props
     extends ExtensionsControllerProps,
@@ -24,7 +25,8 @@ interface Props
         SettingsCascadeProps,
         ActivationProps,
         TelemetryProps,
-        ThemeProps {
+        ThemeProps,
+        VersionContextProps {
     location: H.Location
     history: H.History
     repoName?: string
@@ -33,7 +35,7 @@ interface Props
 
 interface State {
     /** Panel views contributed by extensions. */
-    panelViews?: (PanelViewWithComponent & Pick<ViewProviderRegistrationOptions, 'id'>)[] | null
+    panelViews?: (PanelViewWithComponent & Pick<PanelViewProviderRegistrationOptions, 'id'>)[] | null
 }
 
 /**
@@ -47,7 +49,7 @@ interface PanelItem extends Tab<string> {
     priority: number
 
     /** The content element to display when the tab is active. */
-    element: React.ReactElement<any>
+    element: JSX.Element
 
     /**
      * Whether this panel contains a list of locations (from a location provider). This value is
@@ -70,8 +72,8 @@ export class Panel extends React.PureComponent<Props, State> {
 
     public componentDidMount(): void {
         this.subscriptions.add(
-            this.props.extensionsController.services.views
-                .getViews(ContributableViewContainer.Panel)
+            this.props.extensionsController.services.panelViews
+                .getPanelViews(ContributableViewContainer.Panel)
                 .pipe(map(panelViews => ({ panelViews })))
                 .subscribe(stateUpdate => this.setState(stateUpdate))
         )
@@ -132,7 +134,7 @@ export class Panel extends React.PureComponent<Props, State> {
                                         ? {
                                               type: 'panelView',
                                               id: activePanelViewID,
-                                              hasLocations: Boolean(activePanelView && activePanelView.hasLocations),
+                                              hasLocations: Boolean(activePanelView?.hasLocations),
                                           }
                                         : undefined
                                 }
@@ -143,7 +145,7 @@ export class Panel extends React.PureComponent<Props, State> {
                         tabClassName="tab-bar__tab--h5like"
                         location={this.props.location}
                     >
-                        {items && items.map(({ id, element }) => React.cloneElement(element, { key: id }))}
+                        {items?.map(({ id, element }) => React.cloneElement(element, { key: id }))}
                     </TabsWithURLViewStatePersistence>
                 ) : (
                     <EmptyPanelView />

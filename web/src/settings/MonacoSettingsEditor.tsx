@@ -5,11 +5,9 @@ import { Subject, Subscription } from 'rxjs'
 import { distinctUntilChanged, distinctUntilKeyChanged, map, startWith } from 'rxjs/operators'
 import jsonSchemaMetaSchema from '../../../schema/json-schema-draft-07.schema.json'
 import settingsSchema from '../../../schema/settings.schema.json'
-import { BuiltinTheme, MonacoEditor } from '../components/MonacoEditor'
-import { ThemeProps } from '../theme'
-import { eventLogger } from '../tracking/eventLogger'
-
-const isLightThemeToMonacoTheme = (isLightTheme: boolean): BuiltinTheme => (isLightTheme ? 'vs' : 'sourcegraph-dark')
+import { MonacoEditor } from '../components/MonacoEditor'
+import { ThemeProps } from '../../../shared/src/theme'
+import { TelemetryService } from '../../../shared/src/telemetry/telemetryService'
 
 /**
  * Minimal shape of a JSON Schema. These values are treated as opaque, so more specific types are
@@ -21,6 +19,7 @@ interface JSONSchema {
 
 export interface Props extends ThemeProps {
     id?: string
+    className?: string
     value: string | undefined
     onChange?: (newValue: string) => void
     readOnly?: boolean | undefined
@@ -72,20 +71,6 @@ export class MonacoSettingsEditor extends React.PureComponent<Props, State> {
         )
 
         this.subscriptions.add(
-            componentUpdates
-                .pipe(
-                    map(props => props.isLightTheme),
-                    distinctUntilChanged(),
-                    map(isLightThemeToMonacoTheme)
-                )
-                .subscribe(monacoTheme => {
-                    if (this.monaco) {
-                        this.monaco.editor.setTheme(monacoTheme)
-                    }
-                })
-        )
-
-        this.subscriptions.add(
             componentUpdates.pipe(distinctUntilKeyChanged('jsonSchema')).subscribe(props => {
                 if (this.monaco) {
                     setDiagnosticsOptions(this.monaco, props.jsonSchema)
@@ -111,9 +96,10 @@ export class MonacoSettingsEditor extends React.PureComponent<Props, State> {
         return (
             <MonacoEditor
                 id={this.props.id}
+                className={this.props.className}
                 language={this.props.language || 'json'}
                 height={this.props.height || 400}
-                theme={isLightThemeToMonacoTheme(this.props.isLightTheme)}
+                isLightTheme={this.props.isLightTheme}
                 value={this.props.value}
                 editorWillMount={this.editorWillMount}
                 options={{
@@ -138,9 +124,9 @@ export class MonacoSettingsEditor extends React.PureComponent<Props, State> {
         )
     }
 
-    private editorWillMount = (e: typeof monaco) => {
-        this.monaco = e
-        if (e) {
+    private editorWillMount = (editor: typeof monaco): void => {
+        this.monaco = editor
+        if (editor) {
             this.onDidEditorMount()
         }
     }
@@ -158,20 +144,6 @@ export class MonacoSettingsEditor extends React.PureComponent<Props, State> {
         }
 
         setDiagnosticsOptions(monaco, this.props)
-
-        monaco.editor.defineTheme('sourcegraph-dark', {
-            base: 'vs-dark',
-            inherit: true,
-            colors: {
-                'editor.background': '#0E121B',
-                'editor.foreground': '#F2F4F8',
-                'editorCursor.foreground': '#A2B0CD',
-                'editor.selectionBackground': '#1C7CD650',
-                'editor.selectionHighlightBackground': '#1C7CD625',
-                'editor.inactiveSelectionBackground': '#1C7CD625',
-            },
-            rules: [],
-        })
 
         // Only listen to 1 event each to avoid receiving events from other Monaco editors on the
         // same page (if there are multiple).
@@ -220,8 +192,11 @@ export class MonacoSettingsEditor extends React.PureComponent<Props, State> {
     public static isStandaloneCodeEditor(
         editor: monaco.editor.ICodeEditor
     ): editor is monaco.editor.IStandaloneCodeEditor {
-        const editorAny = editor as any
-        return editor.getEditorType() === monaco.editor.EditorType.ICodeEditor && editorAny.addAction
+        const maybeStandaloneEditor: Partial<monaco.editor.IStandaloneCodeEditor> = editor
+        return (
+            editor.getEditorType() === monaco.editor.EditorType.ICodeEditor &&
+            typeof maybeStandaloneEditor.addAction === 'function'
+        )
     }
 
     public static addEditorAction(
@@ -229,13 +204,14 @@ export class MonacoSettingsEditor extends React.PureComponent<Props, State> {
         model: monaco.editor.IModel,
         label: string,
         id: string,
-        run: ConfigInsertionFunction
+        run: ConfigInsertionFunction,
+        telemetryService: TelemetryService
     ): void {
         inputEditor.addAction({
             label,
             id,
             run: editor => {
-                eventLogger.log('SiteConfigurationActionExecuted', { id })
+                telemetryService.log('SiteConfigurationActionExecuted')
                 editor.focus()
                 editor.pushUndoStop()
                 const { edits, selectText, cursorOffset } = run(editor.getValue())
@@ -274,8 +250,8 @@ export class MonacoSettingsEditor extends React.PureComponent<Props, State> {
     }
 }
 
-function setDiagnosticsOptions(m: typeof monaco, jsonSchema: any): void {
-    m.languages.json.jsonDefaults.setDiagnosticsOptions({
+function setDiagnosticsOptions(editor: typeof monaco, jsonSchema: any): void {
+    editor.languages.json.jsonDefaults.setDiagnosticsOptions({
         validate: true,
         allowComments: true,
         schemas: [
@@ -294,6 +270,10 @@ function setDiagnosticsOptions(m: typeof monaco, jsonSchema: any): void {
                 uri: 'settings.schema.json#',
                 schema: settingsSchema,
             },
+            {
+                uri: 'settings.schema.json',
+                schema: settingsSchema,
+            },
         ],
     })
 }
@@ -302,8 +282,8 @@ function toMonacoEdits(
     model: monaco.editor.IModel,
     edits: jsonc.Edit[]
 ): monaco.editor.IIdentifiedSingleEditOperation[] {
-    return edits.map((edit, i) => ({
-        identifier: { major: model.getVersionId(), minor: i },
+    return edits.map((edit, index) => ({
+        identifier: { major: model.getVersionId(), minor: index },
         range: monaco.Range.fromPositions(
             model.getPositionAt(edit.offset),
             model.getPositionAt(edit.offset + edit.length)
@@ -336,12 +316,12 @@ export type ConfigInsertionFunction = (
 
 function getPositionAt(text: string, offset: number): monaco.IPosition {
     const lines = text.split('\n')
-    let pos = 0
-    for (const [i, line] of lines.entries()) {
-        if (offset < pos + line.length + 1) {
-            return new monaco.Position(i + 1, offset - pos + 1)
+    let position = 0
+    for (const [index, line] of lines.entries()) {
+        if (offset < position + line.length + 1) {
+            return new monaco.Position(index + 1, offset - position + 1)
         }
-        pos += line.length + 1
+        position += line.length + 1
     }
     throw new Error(`offset ${offset} out of bounds in text of length ${text.length}`)
 }

@@ -7,15 +7,16 @@ import (
 
 	"github.com/google/zoekt"
 	zoektquery "github.com/google/zoekt/query"
+	"github.com/sourcegraph/sourcegraph/internal/search"
 )
 
 func (r *RepositoryResolver) TextSearchIndex() *repositoryTextSearchIndexResolver {
-	if !IndexedSearch().Enabled() {
+	if !search.Indexed().Enabled() {
 		return nil
 	}
 	return &repositoryTextSearchIndexResolver{
 		repo:   r,
-		client: IndexedSearch().Client,
+		client: search.Indexed().Client,
 	}
 }
 
@@ -123,7 +124,7 @@ func (r *repositoryTextSearchIndexResolver) Refs(ctx context.Context) ([]*reposi
 	}
 	if entry != nil {
 		for _, branch := range entry.Repository.Branches {
-			name := "refs/heads/" + branch.Name
+			name := branch.Name
 			if branch.Name == "HEAD" {
 				name = defaultBranchRef.name
 			}

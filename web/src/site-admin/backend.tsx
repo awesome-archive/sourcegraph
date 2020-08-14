@@ -1,9 +1,18 @@
-import { Observable, Subject } from 'rxjs'
-import { map, mergeMap, startWith, tap } from 'rxjs/operators'
-import { createInvalidGraphQLMutationResponseError, dataOrThrowErrors, gql } from '../../../shared/src/graphql/graphql'
+import { parse as parseJSONC } from '@sqs/jsonc-parser'
+import { Observable } from 'rxjs'
+import { map, tap, mapTo } from 'rxjs/operators'
+import { repeatUntil } from '../../../shared/src/util/rxjs/repeatUntil'
+import {
+    createInvalidGraphQLMutationResponseError,
+    dataOrThrowErrors,
+    isErrorGraphQLResult,
+    gql,
+} from '../../../shared/src/graphql/graphql'
+import { createAggregateError } from '../../../shared/src/util/errors'
 import * as GQL from '../../../shared/src/graphql/schema'
 import { resetAllMemoizationCaches } from '../../../shared/src/util/memoizeObservable'
 import { mutateGraphQL, queryGraphQL } from '../backend/graphql'
+import { Settings } from '../../../shared/src/settings/settings'
 
 /**
  * Fetches all users.
@@ -82,7 +91,6 @@ interface RepositoryArgs {
     first?: number
     query?: string
     cloned?: boolean
-    cloneInProgress?: boolean
     notCloned?: boolean
     indexed?: boolean
     notIndexed?: boolean
@@ -96,7 +104,6 @@ interface RepositoryArgs {
 function fetchAllRepositories(args: RepositoryArgs): Observable<GQL.IRepositoryConnection> {
     args = {
         cloned: true,
-        cloneInProgress: true,
         notCloned: true,
         indexed: true,
         notIndexed: true,
@@ -108,7 +115,6 @@ function fetchAllRepositories(args: RepositoryArgs): Observable<GQL.IRepositoryC
                 $first: Int
                 $query: String
                 $cloned: Boolean
-                $cloneInProgress: Boolean
                 $notCloned: Boolean
                 $indexed: Boolean
                 $notIndexed: Boolean
@@ -117,7 +123,6 @@ function fetchAllRepositories(args: RepositoryArgs): Observable<GQL.IRepositoryC
                     first: $first
                     query: $query
                     cloned: $cloned
-                    cloneInProgress: $cloneInProgress
                     notCloned: $notCloned
                     indexed: $indexed
                     notIndexed: $notIndexed
@@ -151,18 +156,15 @@ function fetchAllRepositories(args: RepositoryArgs): Observable<GQL.IRepositoryC
 export function fetchAllRepositoriesAndPollIfEmptyOrAnyCloning(
     args: RepositoryArgs
 ): Observable<GQL.IRepositoryConnection> {
-    // Poll if there are repositories that are being cloned or the list is empty.
-    //
-    // TODO(sqs): This is hacky, but I couldn't figure out a better way.
-    const subject = new Subject<null>()
-    return subject.pipe(
-        startWith(null),
-        mergeMap(() => fetchAllRepositories(args)),
-        tap(result => {
-            if (result.nodes && (result.nodes.length === 0 || result.nodes.some(n => !n.mirrorInfo.cloned))) {
-                setTimeout(() => subject.next(), 5000)
-            }
-        })
+    return fetchAllRepositories(args).pipe(
+        // Poll every 5000ms if repositories are being cloned or the list is empty.
+        repeatUntil(
+            result =>
+                result.nodes &&
+                result.nodes.length > 0 &&
+                result.nodes.every(nodes => !nodes.mirrorInfo.cloneInProgress && nodes.mirrorInfo.cloned),
+            { delay: 5000 }
+        )
     )
 }
 
@@ -205,6 +207,40 @@ export function checkMirrorRepositoryConnection(
         map(dataOrThrowErrors),
         tap(() => resetAllMemoizationCaches()),
         map(data => data.checkMirrorRepositoryConnection)
+    )
+}
+
+export function scheduleRepositoryPermissionsSync(args: { repository: GQL.ID }): Observable<void> {
+    return mutateGraphQL(
+        gql`
+            mutation ScheduleRepositoryPermissionsSync($repository: ID!) {
+                scheduleRepositoryPermissionsSync(repository: $repository) {
+                    alwaysNil
+                }
+            }
+        `,
+        args
+    ).pipe(
+        map(dataOrThrowErrors),
+        tap(() => resetAllMemoizationCaches()),
+        mapTo(undefined)
+    )
+}
+
+export function scheduleUserPermissionsSync(args: { user: GQL.ID }): Observable<void> {
+    return mutateGraphQL(
+        gql`
+            mutation ScheduleUserPermissionsSync($user: ID!) {
+                scheduleUserPermissionsSync(user: $user) {
+                    alwaysNil
+                }
+            }
+        `,
+        args
+    ).pipe(
+        map(dataOrThrowErrors),
+        tap(() => resetAllMemoizationCaches()),
+        mapTo(undefined)
     )
 }
 
@@ -291,6 +327,7 @@ export function fetchSite(): Observable<GQL.ISite> {
         query Site {
             site {
                 id
+                canReloadSite
                 configuration {
                     id
                     effectiveContents
@@ -301,6 +338,119 @@ export function fetchSite(): Observable<GQL.ISite> {
     `).pipe(
         map(dataOrThrowErrors),
         map(data => data.site)
+    )
+}
+
+/**
+ * Placeholder for the type of the external service config (to avoid explicit 'any' type)
+ */
+interface ExternalServiceConfig {}
+
+type SettingsSubject = Pick<GQL.SettingsSubject, 'settingsURL' | '__typename'> & {
+    contents: Settings
+}
+
+/**
+ * All configuration and settings in one place.
+ */
+interface AllConfig {
+    site: GQL.ISiteConfiguration
+    externalServices: Partial<Record<GQL.ExternalServiceKind, ExternalServiceConfig>>
+    settings: {
+        subjects: SettingsSubject[]
+        final: Settings | null
+    }
+}
+
+/**
+ * Fetches all the configuration and settings (requires site admin privileges).
+ */
+export function fetchAllConfigAndSettings(): Observable<AllConfig> {
+    return queryGraphQL(
+        gql`
+            query AllConfig($first: Int) {
+                site {
+                    id
+                    configuration {
+                        id
+                        effectiveContents
+                    }
+                    latestSettings {
+                        contents
+                    }
+                    settingsCascade {
+                        final
+                    }
+                }
+
+                externalServices(first: $first) {
+                    nodes {
+                        id
+                        kind
+                        displayName
+                        config
+                        createdAt
+                        updatedAt
+                        warning
+                    }
+                }
+
+                viewerSettings {
+                    ...SiteAdminSettingsCascadeFields
+                }
+            }
+
+            fragment SiteAdminSettingsCascadeFields on SettingsCascade {
+                subjects {
+                    __typename
+                    latestSettings {
+                        id
+                        contents
+                    }
+                    settingsURL
+                }
+                final
+            }
+        `,
+        { first: 100 } // assume no more than 100 external services added
+    ).pipe(
+        map(dataOrThrowErrors),
+        map(data => {
+            const externalServices: Partial<Record<
+                GQL.ExternalServiceKind,
+                ExternalServiceConfig[]
+            >> = data.externalServices.nodes
+                .filter(svc => svc.config)
+                .map(svc => [svc.kind, parseJSONC(svc.config) as ExternalServiceConfig] as const)
+                .reduce<Partial<{ [k in GQL.ExternalServiceKind]: ExternalServiceConfig[] }>>(
+                    (externalServicesByKind, [kind, config]) => {
+                        let services = externalServicesByKind[kind]
+                        if (!services) {
+                            services = []
+                            externalServicesByKind[kind] = services
+                        }
+                        services.push(config)
+                        return externalServicesByKind
+                    },
+                    {}
+                )
+            const settingsSubjects = data.viewerSettings.subjects.map(settings => ({
+                __typename: settings.__typename,
+                settingsURL: settings.settingsURL,
+                contents: settings.latestSettings ? parseJSONC(settings.latestSettings.contents) : null,
+            }))
+            const finalSettings = parseJSONC(data.viewerSettings.final)
+            return {
+                site:
+                    data.site?.configuration?.effectiveContents &&
+                    parseJSONC(data.site.configuration.effectiveContents),
+                externalServices,
+                settings: {
+                    subjects: settingsSubjects,
+                    final: finalSettings,
+                },
+            }
+        })
     )
 }
 
@@ -457,5 +607,49 @@ export function fetchSiteUpdateCheck(): Observable<{
     ).pipe(
         map(dataOrThrowErrors),
         map(data => data.site)
+    )
+}
+
+/**
+ * Resolves to `false` if prometheus API is unavailable (due to being disabled or not configured in this deployment)
+ *
+ * @param days number of days of data to fetch
+ */
+export function fetchMonitoringStats(days: number): Observable<GQL.IMonitoringStatistics | false> {
+    // more details in /internal/prometheusutil.ErrPrometheusUnavailable
+    const errorPrometheusUnavailable = 'prometheus API is unavailable'
+    return queryGraphQL(
+        gql`
+            query SiteMonitoringStatistics($days: Int!) {
+                site {
+                    monitoringStatistics(days: $days) {
+                        alerts {
+                            serviceName
+                            name
+                            timestamp
+                            average
+                            owner
+                        }
+                    }
+                }
+            }
+        `,
+        { days }
+    ).pipe(
+        map(result => {
+            if (isErrorGraphQLResult(result)) {
+                if (result.errors.find(error => error.message.includes(errorPrometheusUnavailable))) {
+                    return false
+                }
+                throw createAggregateError(result.errors)
+            }
+            return result.data
+        }),
+        map(data => {
+            if (data) {
+                return data.site.monitoringStatistics
+            }
+            return data
+        })
     )
 }

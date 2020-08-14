@@ -1,4 +1,3 @@
-import { upperFirst } from 'lodash'
 import * as React from 'react'
 import { Link } from 'react-router-dom'
 import { Observable, Subject, Subscription } from 'rxjs'
@@ -7,10 +6,11 @@ import { gql } from '../../../../shared/src/graphql/graphql'
 import * as GQL from '../../../../shared/src/graphql/schema'
 import { asError, createAggregateError, ErrorLike, isErrorLike } from '../../../../shared/src/util/errors'
 import { mutateGraphQL } from '../../backend/graphql'
-import { FilteredConnection } from '../../components/FilteredConnection'
 import { Timestamp } from '../../components/time/Timestamp'
 import { userURL } from '../../user'
 import { AccessTokenCreatedAlert } from './AccessTokenCreatedAlert'
+import { ErrorAlert } from '../../components/alerts'
+import * as H from 'history'
 
 export const accessTokenFragment = gql`
     fragment AccessTokenFields on AccessToken {
@@ -60,6 +60,7 @@ export interface AccessTokenNodeProps {
     newToken?: GQL.ICreateAccessTokenResult
 
     onDidUpdate: () => void
+    history: H.History
 }
 
 interface AccessTokenNodeState {
@@ -86,7 +87,7 @@ export class AccessTokenNode extends React.PureComponent<AccessTokenNodeProps, A
                         deleteAccessToken(this.props.node.id).pipe(
                             mapTo(null),
                             catchError(error => [asError(error)]),
-                            map(c => ({ deletionOrError: c })),
+                            map(deletionOrError => ({ deletionOrError })),
                             tap(() => {
                                 if (this.props.onDidUpdate) {
                                     this.props.onDidUpdate()
@@ -96,7 +97,10 @@ export class AccessTokenNode extends React.PureComponent<AccessTokenNodeProps, A
                         )
                     )
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), error => console.error(error))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate),
+                    error => console.error(error)
+                )
         )
     }
 
@@ -108,7 +112,7 @@ export class AccessTokenNode extends React.PureComponent<AccessTokenNodeProps, A
         const note = this.props.node.note || '(no description)'
         const loading = this.state.deletionOrError === undefined
         return (
-            <li className="list-group-item p-3 d-block" data-e2e-access-token-description={this.props.node.note}>
+            <li className="list-group-item p-3 d-block" data-test-access-token-description={this.props.node.note}>
                 <div className="d-flex w-100 justify-content-between">
                     <div className="mr-2">
                         {this.props.showSubject ? (
@@ -125,7 +129,7 @@ export class AccessTokenNode extends React.PureComponent<AccessTokenNodeProps, A
                         )}{' '}
                         <small className="text-muted">
                             {' '}
-                            &mdash; <em>{this.props.node.scopes && this.props.node.scopes.join(', ')}</em>
+                            &mdash; <em>{this.props.node.scopes?.join(', ')}</em>
                             <br />
                             {this.props.node.lastUsedAt ? (
                                 <>
@@ -149,16 +153,18 @@ export class AccessTokenNode extends React.PureComponent<AccessTokenNodeProps, A
                     <div>
                         <button
                             type="button"
-                            className="btn btn-danger e2e-access-token-delete"
+                            className="btn btn-danger test-access-token-delete"
                             onClick={this.deleteAccessToken}
                             disabled={loading}
                         >
                             Delete
                         </button>
                         {isErrorLike(this.state.deletionOrError) && (
-                            <div className="alert alert-danger mt-2">
-                                Error: {upperFirst(this.state.deletionOrError.message)}
-                            </div>
+                            <ErrorAlert
+                                className="mt-2"
+                                error={this.state.deletionOrError}
+                                history={this.props.history}
+                            />
                         )}
                     </div>
                 </div>
@@ -173,10 +179,5 @@ export class AccessTokenNode extends React.PureComponent<AccessTokenNodeProps, A
         )
     }
 
-    private deleteAccessToken = () => this.deletes.next()
+    private deleteAccessToken = (): void => this.deletes.next()
 }
-
-export class FilteredAccessTokenConnection extends FilteredConnection<
-    GQL.IAccessToken,
-    Pick<AccessTokenNodeProps, 'onDidUpdate'>
-> {}

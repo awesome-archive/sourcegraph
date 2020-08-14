@@ -5,6 +5,8 @@ import {
     DecorationAttachmentRenderOptions,
     ThemableDecorationAttachmentStyle,
     ThemableDecorationStyle,
+    BadgeAttachmentRenderOptions,
+    ThemableBadgeAttachmentStyle,
 } from 'sourcegraph'
 import { combineLatestOrDefault } from '../../../util/rxjs/combineLatestOrDefault'
 import { TextDocumentIdentifier } from '../types/textDocument'
@@ -20,8 +22,8 @@ export class TextDocumentDecorationProviderRegistry extends FeatureProviderRegis
     undefined,
     ProvideTextDocumentDecorationSignature
 > {
-    public getDecorations(params: TextDocumentIdentifier): Observable<TextDocumentDecoration[] | null> {
-        return getDecorations(this.providers, params)
+    public getDecorations(parameters: TextDocumentIdentifier): Observable<TextDocumentDecoration[] | null> {
+        return getDecorations(this.providers, parameters)
     }
 }
 
@@ -33,10 +35,10 @@ export class TextDocumentDecorationProviderRegistry extends FeatureProviderRegis
  */
 export function getDecorations(
     providers: Observable<ProvideTextDocumentDecorationSignature[]>,
-    params: TextDocumentIdentifier
+    parameters: TextDocumentIdentifier
 ): Observable<TextDocumentDecoration[] | null> {
     return providers
-        .pipe(switchMap(providers => combineLatestOrDefault(providers.map(provider => provider(params)))))
+        .pipe(switchMap(providers => combineLatestOrDefault(providers.map(provider => provider(parameters)))))
         .pipe(map(flattenAndCompact))
 }
 
@@ -66,6 +68,19 @@ export function decorationAttachmentStyleForTheme(
     return { ...base, ...overrides }
 }
 
+/**
+ * Resolves the actual styles to use for the badge attachment based on the current theme.
+ */
+export function badgeAttachmentStyleForTheme(
+    attachment: BadgeAttachmentRenderOptions,
+    isLightTheme: boolean
+): ThemableBadgeAttachmentStyle {
+    const overrides = isLightTheme ? attachment.light : attachment.dark
+    // Discard non-ThemableDecorationAttachmentStyle properties so they aren't included in result.
+    const { hoverMessage, linkURL, light, dark, ...base } = attachment
+    return { ...base, ...overrides }
+}
+
 export type DecorationMapByLine = ReadonlyMap<number, TextDocumentDecoration[]>
 
 /**
@@ -75,13 +90,13 @@ export type DecorationMapByLine = ReadonlyMap<number, TextDocumentDecoration[]>
  */
 export const groupDecorationsByLine = (decorations: TextDocumentDecoration[] | null): DecorationMapByLine => {
     const grouped = new Map<number, TextDocumentDecoration[]>()
-    for (const d of decorations || []) {
-        const lineNumber = d.range.start.line + 1
+    for (const decoration of decorations || []) {
+        const lineNumber = decoration.range.start.line + 1
         const decorationsForLine = grouped.get(lineNumber)
         if (!decorationsForLine) {
-            grouped.set(lineNumber, [d])
+            grouped.set(lineNumber, [decoration])
         } else {
-            decorationsForLine.push(d)
+            decorationsForLine.push(decoration)
         }
     }
     return grouped

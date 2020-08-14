@@ -1,6 +1,6 @@
 import { isEqual } from 'lodash'
 import { combineLatest, from, Observable, ObservableInput, of, Subscribable } from 'rxjs'
-import { ajax } from 'rxjs/ajax'
+import { fromFetch } from 'rxjs/fetch'
 import { catchError, distinctUntilChanged, map, switchMap, tap } from 'rxjs/operators'
 import {
     ConfiguredExtension,
@@ -13,8 +13,9 @@ import { isErrorLike } from '../../../util/errors'
 import { memoizeObservable } from '../../../util/memoizeObservable'
 import { combineLatestOrDefault } from '../../../util/rxjs/combineLatestOrDefault'
 import { isDefined } from '../../../util/types'
-import { CodeEditorWithPartialModel, EditorService } from './editorService'
-import { SettingsService } from './settings'
+import { ModelService } from './modelService'
+import { checkOk } from '../../../backend/fetch'
+import { ExtensionManifest } from '../../../schema/extensionSchema'
 
 /**
  * The information about an extension necessary to execute and activate it.
@@ -24,27 +25,39 @@ export interface ExecutableExtension extends Pick<ConfiguredExtension, 'id' | 'm
     scriptURL: string
 }
 
+/**
+ * The manifest of an extension sideloaded during local development.
+ *
+ * Doesn't include {@link ExtensionManifest#url}, as this is added when
+ * publishing an extension to the registry.
+ * Instead, the bundle URL is computed from the manifest's `main` field.
+ */
+interface SideloadedExtensionManifest extends Omit<ExtensionManifest, 'url'> {
+    name: string
+    main: string
+}
+
 const getConfiguredSideloadedExtension = (baseUrl: string): Observable<ConfiguredExtension> =>
-    ajax({
-        url: `${baseUrl}/package.json`,
-        responseType: 'json',
-        crossDomain: true,
-        async: true,
-    }).pipe(
+    fromFetch(`${baseUrl}/package.json`, { selector: response => checkOk(response).json() }).pipe(
         map(
-            ({ response }): ConfiguredExtension => ({
+            (response: SideloadedExtensionManifest): ConfiguredExtension => ({
                 id: response.name,
                 manifest: {
-                    url: `${baseUrl}/${response.main.replace('dist/', '')}`,
                     ...response,
+                    url: `${baseUrl}/${response.main.replace('dist/', '')}`,
                 },
                 rawManifest: null,
             })
         )
     )
 
-interface PartialContext extends Pick<PlatformContext, 'requestGraphQL' | 'getScriptURLForExtension'> {
+export interface PartialContext
+    extends Pick<PlatformContext, 'requestGraphQL' | 'getScriptURLForExtension' | 'settings'> {
     sideloadedExtensionURL: Subscribable<string | null>
+}
+
+export interface IExtensionsService {
+    activeExtensions: Subscribable<ExecutableExtension[]>
 }
 
 /**
@@ -53,11 +66,10 @@ interface PartialContext extends Pick<PlatformContext, 'requestGraphQL' | 'getSc
  * @internal This is an internal implementation detail and is different from the product feature called the
  * "extension registry" (where users can search for and enable extensions).
  */
-export class ExtensionsService {
+export class ExtensionsService implements IExtensionsService {
     constructor(
         private platformContext: PartialContext,
-        private editorService: Pick<EditorService, 'editorsAndModels'>,
-        private settingsService: Pick<SettingsService, 'data'>,
+        private modelService: Pick<ModelService, 'activeLanguages'>,
         private extensionActivationFilter = extensionsWithMatchedActivationEvent,
         private fetchSideloadedExtension: (
             baseUrl: string
@@ -65,7 +77,7 @@ export class ExtensionsService {
     ) {}
 
     protected configuredExtensions: Subscribable<ConfiguredExtension[]> = viewerConfiguredExtensions({
-        settings: this.settingsService.data,
+        settings: this.platformContext.settings,
         requestGraphQL: this.platformContext.requestGraphQL,
     })
 
@@ -76,12 +88,14 @@ export class ExtensionsService {
      */
     private get enabledExtensions(): Subscribable<ConfiguredExtension[]> {
         return combineLatest([
-            from(this.settingsService.data),
+            from(this.platformContext.settings),
             from(this.configuredExtensions),
             this.sideloadedExtension,
         ]).pipe(
             map(([settings, configuredExtensions, sideloadedExtension]) => {
-                const enabled = [...configuredExtensions.filter(x => isExtensionEnabled(settings.final, x.id))]
+                const enabled = [
+                    ...configuredExtensions.filter(extension => isExtensionEnabled(settings.final, extension.id)),
+                ]
                 if (sideloadedExtension) {
                     enabled.push(sideloadedExtension)
                 }
@@ -93,8 +107,8 @@ export class ExtensionsService {
     private get sideloadedExtension(): Subscribable<ConfiguredExtension | null> {
         return from(this.platformContext.sideloadedExtensionURL).pipe(
             switchMap(url => (url ? this.fetchSideloadedExtension(url) : of(null))),
-            catchError(err => {
-                console.error(`Error sideloading extension: ${err}`)
+            catchError(error => {
+                console.error('Error sideloading extension', error)
                 return of(null)
             })
         )
@@ -111,36 +125,36 @@ export class ExtensionsService {
      *
      * @todo Consider whether extensions should be deactivated if none of their activationEvents are true (or that
      * plus a certain period of inactivity).
-     *
-     * @param extensionActivationFilter A function that returns the set of extensions that should be activated
-     * based on the current model only. It does not need to account for remembering which extensions were
-     * previously activated in prior states.
      */
     public get activeExtensions(): Subscribable<ExecutableExtension[]> {
         // Extensions that have been activated (including extensions with zero "activationEvents" that evaluate to
         // true currently).
         const activatedExtensionIDs = new Set<string>()
-        return combineLatest(from(this.editorService.editorsAndModels), this.enabledExtensions).pipe(
-            tap(([editors, enabledExtensions]) => {
-                const activeExtensions = this.extensionActivationFilter(enabledExtensions, editors)
-                for (const x of activeExtensions) {
-                    if (!activatedExtensionIDs.has(x.id)) {
-                        activatedExtensionIDs.add(x.id)
+        return combineLatest([from(this.modelService.activeLanguages), this.enabledExtensions]).pipe(
+            tap(([activeLanguages, enabledExtensions]) => {
+                const activeExtensions = this.extensionActivationFilter(enabledExtensions, activeLanguages)
+                for (const extension of activeExtensions) {
+                    if (!activatedExtensionIDs.has(extension.id)) {
+                        activatedExtensionIDs.add(extension.id)
                     }
                 }
             }),
-            map(([, extensions]) => (extensions ? extensions.filter(x => activatedExtensionIDs.has(x.id)) : [])),
-            distinctUntilChanged((a, b) => isEqual(new Set(a.map(e => e.id)), new Set(b.map(e => e.id)))),
+            map(([, extensions]) =>
+                extensions ? extensions.filter(extension => activatedExtensionIDs.has(extension.id)) : []
+            ),
+            distinctUntilChanged((a, b) =>
+                isEqual(new Set(a.map(extension => extension.id)), new Set(b.map(extension => extension.id)))
+            ),
             switchMap(extensions =>
                 combineLatestOrDefault(
-                    extensions.map(x =>
-                        this.memoizedGetScriptURLForExtension(getScriptURLFromExtensionManifest(x)).pipe(
+                    extensions.map(extension =>
+                        this.memoizedGetScriptURLForExtension(getScriptURLFromExtensionManifest(extension)).pipe(
                             map(scriptURL =>
                                 scriptURL === null
                                     ? null
                                     : {
-                                          id: x.id,
-                                          manifest: x.manifest,
+                                          id: extension.id,
+                                          manifest: extension.manifest,
                                           scriptURL,
                                       }
                             )
@@ -149,15 +163,17 @@ export class ExtensionsService {
                 )
             ),
             map(extensions => extensions.filter(isDefined)),
-            distinctUntilChanged((a, b) => isEqual(new Set(a.map(e => e.id)), new Set(b.map(e => e.id))))
+            distinctUntilChanged((a, b) =>
+                isEqual(new Set(a.map(extension => extension.id)), new Set(b.map(extension => extension.id)))
+            )
         )
     }
 
     private memoizedGetScriptURLForExtension = memoizeObservable<string, string | null>(
         url =>
             asObservable(this.platformContext.getScriptURLForExtension(url)).pipe(
-                catchError(err => {
-                    console.error(`Error fetching extension script URL ${url}`, err)
+                catchError(error => {
+                    console.error(`Error fetching extension script URL ${url}`, error)
                     return [null]
                 })
             ),
@@ -171,35 +187,39 @@ function asObservable(input: string | ObservableInput<string>): Observable<strin
 
 function extensionsWithMatchedActivationEvent(
     enabledExtensions: ConfiguredExtension[],
-    editors: readonly CodeEditorWithPartialModel[]
+    visibleTextDocumentLanguages: ReadonlySet<string>
 ): ConfiguredExtension[] {
-    return enabledExtensions.filter(x => {
+    const languageActivationEvents = new Set(
+        [...visibleTextDocumentLanguages].map(language => `onLanguage:${language}`)
+    )
+    return enabledExtensions.filter(extension => {
         try {
-            if (!x.manifest) {
-                const match = /^sourcegraph\/lang-(.*)$/.exec(x.id)
+            if (!extension.manifest) {
+                const match = /^sourcegraph\/lang-(.*)$/.exec(extension.id)
                 if (match) {
                     console.warn(
-                        `Extension ${x.id} has been renamed to sourcegraph/${match[1]}. It's safe to remove ${x.id} from your settings.`
+                        `Extension ${extension.id} has been renamed to sourcegraph/${match[1]}. It's safe to remove ${extension.id} from your settings.`
                     )
                 } else {
-                    console.warn(`Extension ${x.id} was not found. Remove it from settings to suppress this warning.`)
+                    console.warn(
+                        `Extension ${extension.id} was not found. Remove it from settings to suppress this warning.`
+                    )
                 }
                 return false
             }
-            if (isErrorLike(x.manifest)) {
-                console.warn(x.manifest)
+            if (isErrorLike(extension.manifest)) {
+                console.warn(extension.manifest)
                 return false
             }
-            if (!x.manifest.activationEvents) {
-                console.warn(`Extension ${x.id} has no activation events, so it will never be activated.`)
+            if (!extension.manifest.activationEvents) {
+                console.warn(`Extension ${extension.id} has no activation events, so it will never be activated.`)
                 return false
             }
-            const visibleTextDocumentLanguages = editors.map(({ model: { languageId } }) => languageId)
-            return x.manifest.activationEvents.some(
-                e => e === '*' || visibleTextDocumentLanguages.some(l => e === `onLanguage:${l}`)
+            return extension.manifest.activationEvents.some(
+                event => event === '*' || languageActivationEvents.has(event)
             )
-        } catch (err) {
-            console.error(err)
+        } catch (error) {
+            console.error(error)
         }
         return false
     })

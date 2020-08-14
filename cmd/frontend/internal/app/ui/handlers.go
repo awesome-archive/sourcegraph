@@ -13,23 +13,25 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/inconshreveable/log15"
 	"github.com/pkg/errors"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/app/assetsutil"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/app/jscontext"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/pkg/handlerutil"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
-	"github.com/sourcegraph/sourcegraph/pkg/actor"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/conf"
-	"github.com/sourcegraph/sourcegraph/pkg/env"
-	"github.com/sourcegraph/sourcegraph/pkg/errcode"
-	"github.com/sourcegraph/sourcegraph/pkg/gitserver"
-	"github.com/sourcegraph/sourcegraph/pkg/repoupdater"
-	"github.com/sourcegraph/sourcegraph/pkg/routevar"
-	"github.com/sourcegraph/sourcegraph/pkg/vcs"
-	log15 "gopkg.in/inconshreveable/log15.v2"
+	"github.com/sourcegraph/sourcegraph/internal/actor"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/env"
+	"github.com/sourcegraph/sourcegraph/internal/errcode"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver"
+	"github.com/sourcegraph/sourcegraph/internal/repoupdater"
+	"github.com/sourcegraph/sourcegraph/internal/routevar"
+	"github.com/sourcegraph/sourcegraph/internal/vcs"
+	"github.com/sourcegraph/sourcegraph/internal/vcs/git"
 )
 
 type InjectedHTML struct {
@@ -59,8 +61,6 @@ type Common struct {
 	AssetURL string
 	Title    string
 	Error    *pageError
-
-	InjectSourcegraphTracker bool
 
 	WebpackDevServer bool // whether the Webpack dev server is running (WEBPACK_DEV_SERVER env var)
 
@@ -100,10 +100,10 @@ func repoShortName(name api.RepoName) string {
 func newCommon(w http.ResponseWriter, r *http.Request, title string, serveError func(w http.ResponseWriter, r *http.Request, err error, statusCode int)) (*Common, error) {
 	common := &Common{
 		Injected: InjectedHTML{
-			HeadTop:    template.HTML(conf.Get().Critical.HtmlHeadTop),
-			HeadBottom: template.HTML(conf.Get().Critical.HtmlHeadBottom),
-			BodyTop:    template.HTML(conf.Get().Critical.HtmlBodyTop),
-			BodyBottom: template.HTML(conf.Get().Critical.HtmlBodyBottom),
+			HeadTop:    template.HTML(conf.Get().HtmlHeadTop),
+			HeadBottom: template.HTML(conf.Get().HtmlHeadBottom),
+			BodyTop:    template.HTML(conf.Get().HtmlBodyTop),
+			BodyBottom: template.HTML(conf.Get().HtmlBodyBottom),
 		},
 		Context:  jscontext.NewJSContextFromRequest(r),
 		AssetURL: assetsutil.URL("").String(),
@@ -114,8 +114,7 @@ func newCommon(w http.ResponseWriter, r *http.Request, title string, serveError 
 			ShowPreview: r.URL.Path == "/sign-in" && r.URL.RawQuery == "returnTo=%2F",
 		},
 
-		InjectSourcegraphTracker: envvar.SourcegraphDotComMode(),
-		WebpackDevServer:         webpackDevServer,
+		WebpackDevServer: webpackDevServer,
 	}
 
 	if _, ok := mux.Vars(r)["Repo"]; ok {
@@ -150,6 +149,12 @@ func newCommon(w http.ResponseWriter, r *http.Request, title string, serveError 
 				return nil, nil
 			}
 			if _, ok := errors.Cause(err).(*gitserver.RepoNotCloneableErr); ok {
+				if errcode.IsNotFound(err) {
+					// Repository is not found.
+					serveError(w, r, err, http.StatusNotFound)
+					return nil, nil
+				}
+
 				// Repository is not clonable.
 				dangerouslyServeError(w, r, errors.New("repository could not be cloned"), http.StatusInternalServerError)
 				return nil, nil
@@ -163,12 +168,12 @@ func newCommon(w http.ResponseWriter, r *http.Request, title string, serveError 
 				serveError(w, r, err, http.StatusNotFound)
 				return nil, nil
 			}
-			if errcode.IsNotFound(err) || errors.Cause(err) == repoupdater.ErrNotFound {
+			if errcode.IsNotFound(err) {
 				// Repo does not exist.
 				serveError(w, r, err, http.StatusNotFound)
 				return nil, nil
 			}
-			if errors.Cause(err) == repoupdater.ErrUnauthorized {
+			if errcode.IsUnauthorized(err) {
 				// Not authorized to access repository.
 				serveError(w, r, err, http.StatusUnauthorized)
 				return nil, nil
@@ -250,16 +255,77 @@ func serveSignIn(w http.ResponseWriter, r *http.Request) error {
 	}
 	common.Title = brandNameSubtitle("Sign in")
 
-	// If we are being redirected to another page after sign in, it means the
-	// user attempted to access something without authorization. Reflect this
-	// in the status code. This is useful when users curl / code which
-	// interacts with the Sourcegraph endpoints. Specifically this is a common
-	// issue facing extension developers interacting with the raw API.
-	if r.URL.Query().Get("returnTo") != "" {
-		w.WriteHeader(http.StatusUnauthorized)
+	return renderTemplate(w, "app.html", common)
+}
+
+// redirectTreeOrBlob redirects a blob page to a tree page if the file is actually a directory,
+// or a tree page to a blob page if the directory is actually a file.
+func redirectTreeOrBlob(routeName, path string, common *Common, w http.ResponseWriter, r *http.Request) (requestHandled bool, err error) {
+	// NOTE: It makes no sense for this function to proceed if the commit ID
+	// for the repository is empty. It is most likely the repository is still
+	// clone in progress.
+	if common.CommitID == "" {
+		return false, nil
 	}
 
-	return renderTemplate(w, "app.html", common)
+	if path == "/" || path == "" {
+		if routeName != routeRepo {
+			// Redirect to repo route
+			target := "/" + string(common.Repo.Name) + common.Rev
+			http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+			return true, nil
+		}
+		return false, nil
+	}
+	cachedRepo, err := backend.CachedGitRepo(r.Context(), common.Repo)
+	if err != nil {
+		return false, err
+	}
+	stat, err := git.Stat(r.Context(), *cachedRepo, common.CommitID, path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			serveError(w, r, err, http.StatusNotFound)
+			return true, nil
+		}
+		return false, err
+	}
+	expectedDir := routeName == routeTree
+	if stat.Mode().IsDir() != expectedDir {
+		target := "/" + string(common.Repo.Name) + common.Rev + "/-/"
+		if expectedDir {
+			target += "blob"
+		} else {
+			target += "tree"
+		}
+		target += path
+		http.Redirect(w, r, auth.SafeRedirectURL(target), http.StatusTemporaryRedirect)
+		return true, nil
+	}
+	return false, nil
+}
+
+// serveTree serves the tree (directory) pages.
+func serveTree(title func(c *Common, r *http.Request) string) handlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		common, err := newCommon(w, r, "", serveError)
+		if err != nil {
+			return err
+		}
+		if common == nil {
+			return nil // request was handled
+		}
+
+		handled, err := redirectTreeOrBlob(routeTree, mux.Vars(r)["Path"], common, w, r)
+		if handled {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		common.Title = title(common, r)
+		return renderTemplate(w, "app.html", common)
+	}
 }
 
 func serveRepoOrBlob(routeName string, title func(c *Common, r *http.Request) string) handlerFunc {
@@ -271,6 +337,15 @@ func serveRepoOrBlob(routeName string, title func(c *Common, r *http.Request) st
 		if common == nil {
 			return nil // request was handled
 		}
+
+		handled, err := redirectTreeOrBlob(routeName, mux.Vars(r)["Path"], common, w, r)
+		if handled {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
 		common.Title = title(common, r)
 
 		q := r.URL.Query()

@@ -7,8 +7,8 @@ import (
 
 	gqlerrors "github.com/graph-gophers/graphql-go/errors"
 	"github.com/graph-gophers/graphql-go/gqltesting"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
+	"github.com/sourcegraph/sourcegraph/internal/db"
 )
 
 func TestNamespace(t *testing.T) {
@@ -23,7 +23,7 @@ func TestNamespace(t *testing.T) {
 		}
 		gqltesting.RunTests(t, []*gqltesting.Test{
 			{
-				Schema: GraphQLSchema,
+				Schema: mustParseGraphQLSchema(t),
 				Query: `
 				{
 					namespace(id: "VXNlcjoz") {
@@ -55,7 +55,7 @@ func TestNamespace(t *testing.T) {
 		}
 		gqltesting.RunTests(t, []*gqltesting.Test{
 			{
-				Schema: GraphQLSchema,
+				Schema: mustParseGraphQLSchema(t),
 				Query: `
 				{
 					namespace(id: "T3JnOjM=") {
@@ -80,7 +80,7 @@ func TestNamespace(t *testing.T) {
 		resetMocks()
 		gqltesting.RunTests(t, []*gqltesting.Test{
 			{
-				Schema: GraphQLSchema,
+				Schema: mustParseGraphQLSchema(t),
 				Query: `
 				{
 					namespace(id: "aW52YWxpZDoz") {

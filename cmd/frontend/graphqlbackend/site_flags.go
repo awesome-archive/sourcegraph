@@ -6,8 +6,8 @@ import (
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
-	"github.com/sourcegraph/sourcegraph/pkg/conf"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/db"
 )
 
 func (r *siteResolver) NeedsRepositoryConfiguration(ctx context.Context) (bool, error) {
@@ -18,7 +18,8 @@ func (r *siteResolver) NeedsRepositoryConfiguration(ctx context.Context) (bool, 
 	// 🚨 SECURITY: The site alerts may contain sensitive data, so only site
 	// admins may view them.
 	if err := backend.CheckCurrentUserIsSiteAdmin(ctx); err != nil {
-		return false, err
+		// TODO(dax): This should return err once the site flags query is fixed for users
+		return false, nil
 	}
 
 	return needsRepositoryConfiguration(ctx)
@@ -74,5 +75,5 @@ func (r *siteResolver) FreeUsersExceeded(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	return *NoLicenseWarningUserCount < int32(userCount), nil
+	return *NoLicenseWarningUserCount <= int32(userCount), nil
 }

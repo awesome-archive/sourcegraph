@@ -7,7 +7,7 @@ import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { HeroPage } from '../../components/HeroPage'
 import { SettingsArea } from '../../settings/SettingsArea'
 import { SiteAdminAlert } from '../../site-admin/SiteAdminAlert'
-import { ThemeProps } from '../../theme'
+import { ThemeProps } from '../../../../shared/src/theme'
 import { OrgAreaPageProps } from '../area/OrgArea'
 import { OrgSettingsSidebar } from './OrgSettingsSidebar'
 import { OrgSettingsProfilePage } from './profile/OrgSettingsProfilePage'
@@ -49,7 +49,6 @@ export const OrgSettingsArea: React.FunctionComponent<Props> = props => {
                                         {...routeComponentProps}
                                         {...props}
                                         subject={props.org}
-                                        isLightTheme={props.isLightTheme}
                                         extraHeader={
                                             <>
                                                 {props.authenticatedUser &&

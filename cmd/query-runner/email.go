@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/inconshreveable/log15"
 	"github.com/pkg/errors"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/txemail"
-	"github.com/sourcegraph/sourcegraph/pkg/txemail/txtypes"
-	log15 "gopkg.in/inconshreveable/log15.v2"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/txemail"
+	"github.com/sourcegraph/sourcegraph/internal/txemail/txtypes"
 )
 
 func canSendEmail(ctx context.Context) error {
@@ -49,6 +49,7 @@ func (n *notifier) emailNotify(ctx context.Context) {
 			}
 			if err := sendEmail(ctx, recipient.spec.userID, "results", newSearchResultsEmailTemplates, struct {
 				URL                    string
+				SavedSearchPageURL     string
 				Description            string
 				Query                  string
 				ApproximateResultCount string
@@ -56,6 +57,7 @@ func (n *notifier) emailNotify(ctx context.Context) {
 				PluralResults          string
 			}{
 				URL:                    searchURL(n.newQuery, utmSourceEmail),
+				SavedSearchPageURL:     savedSearchListPageURL(utmSourceEmail),
 				Description:            n.query.Description,
 				Query:                  n.query.Query,
 				ApproximateResultCount: n.results.Data.Search.Results.ApproximateResultCount,
@@ -83,6 +85,8 @@ View the new result{{.PluralResults}} on Sourcegraph: {{.URL}}
 <p style="padding-left: 16px">&quot;{{.Description}}&quot;</p>
 
 <p><a href="{{.URL}}">View the new result{{.PluralResults}} on Sourcegraph</a></p>
+
+<p><a href="{{.SavedSearchPageURL}}">Edit your saved searches on Sourcegraph</a></p>
 `,
 })
 
@@ -141,7 +145,7 @@ func sendEmail(ctx context.Context, userID int32, eventType string, template txt
 	}); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("InternalClient.SendEmail to email=%q userID=%d", *email, userID))
 	}
-	logEvent(userID, *email, "SavedSearchEmailNotificationSent", eventType)
+	logEvent(userID, "SavedSearchEmailNotificationSent", eventType)
 	return nil
 }
 

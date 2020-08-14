@@ -1,11 +1,13 @@
-import { Shortcut, ShortcutProps } from '@slimsag/react-shortcuts'
+import { Shortcut } from '@slimsag/react-shortcuts'
 import * as H from 'history'
 import React from 'react'
 import { Link } from 'react-router-dom'
 import { ButtonDropdown, DropdownItem, DropdownMenu, DropdownToggle } from 'reactstrap'
 import * as GQL from '../../../shared/src/graphql/schema'
-import { ThemePreference, ThemePreferenceProps, ThemeProps } from '../theme'
+import { KeyboardShortcut } from '../../../shared/src/keyboardShortcuts'
+import { ThemeProps } from '../../../shared/src/theme'
 import { UserAvatar } from '../user/UserAvatar'
+import { ThemePreferenceProps, ThemePreference } from '../theme'
 
 interface Props extends ThemeProps, ThemePreferenceProps {
     location: H.Location
@@ -14,8 +16,7 @@ interface Props extends ThemeProps, ThemePreferenceProps {
         'username' | 'avatarURL' | 'settingsURL' | 'organizations' | 'siteAdmin' | 'session'
     >
     showDotComMarketing: boolean
-    showDiscussions: boolean
-    switchThemeKeybinding?: Pick<ShortcutProps, 'held' | 'ordered'>[]
+    keyboardShortcutForSwitchTheme?: KeyboardShortcut
 }
 
 interface State {
@@ -28,14 +29,14 @@ interface State {
  */
 export class UserNavItem extends React.PureComponent<Props, State> {
     private supportsSystemTheme = Boolean(
-        window.matchMedia && window.matchMedia('not all and (prefers-color-scheme), (prefers-color-scheme)').matches
+        window.matchMedia?.('not all and (prefers-color-scheme), (prefers-color-scheme)').matches
     )
 
     public state: State = { isOpen: false }
 
-    public componentDidUpdate(prevProps: Props): void {
+    public componentDidUpdate(previousProps: Props): void {
         // Close dropdown after clicking on a dropdown item.
-        if (this.state.isOpen && this.props.location !== prevProps.location) {
+        if (this.state.isOpen && this.props.location !== previousProps.location) {
             /* eslint react/no-did-update-set-state: warn */
             this.setState({ isOpen: false })
         }
@@ -46,7 +47,7 @@ export class UserNavItem extends React.PureComponent<Props, State> {
             <ButtonDropdown isOpen={this.state.isOpen} toggle={this.toggleIsOpen} className="py-0">
                 <DropdownToggle
                     caret={true}
-                    className="bg-transparent d-flex align-items-center e2e-user-nav-item-toggle"
+                    className="bg-transparent d-flex align-items-center test-user-nav-item-toggle"
                     nav={true}
                 >
                     {this.props.authenticatedUser.avatarURL ? (
@@ -66,11 +67,6 @@ export class UserNavItem extends React.PureComponent<Props, State> {
                     <Link to="/extensions" className="dropdown-item">
                         Extensions
                     </Link>
-                    {this.props.showDiscussions && (
-                        <Link to="/discussions" className="dropdown-item">
-                            Discussions
-                        </Link>
-                    )}
                     <Link to={`/users/${this.props.authenticatedUser.username}/searches`} className="dropdown-item">
                         Saved searches
                     </Link>
@@ -78,10 +74,8 @@ export class UserNavItem extends React.PureComponent<Props, State> {
                     <div className="px-2 py-1">
                         <div className="d-flex align-items-center">
                             <div className="mr-2">Theme</div>
-                            {/* <Select> doesn't support small version */}
-                            {/* eslint-disable-next-line react/forbid-elements */}
                             <select
-                                className="custom-select custom-select-sm e2e-theme-toggle"
+                                className="custom-select custom-select-sm test-theme-toggle"
                                 onChange={this.onThemeChange}
                                 value={this.props.themePreference}
                             >
@@ -104,10 +98,9 @@ export class UserNavItem extends React.PureComponent<Props, State> {
                                 </small>
                             </div>
                         )}
-                        {this.props.switchThemeKeybinding &&
-                            this.props.switchThemeKeybinding.map((keybinding, i) => (
-                                <Shortcut key={i} {...keybinding} onMatch={this.onThemeCycle} />
-                            ))}
+                        {this.props.keyboardShortcutForSwitchTheme?.keybindings.map((keybinding, index) => (
+                            <Shortcut key={index} {...keybinding} onMatch={this.onThemeCycle} />
+                        ))}
                     </div>
                     {this.props.authenticatedUser.organizations.nodes.length > 0 && (
                         <>
@@ -136,7 +129,7 @@ export class UserNavItem extends React.PureComponent<Props, State> {
                             Help
                         </Link>
                     )}
-                    {this.props.authenticatedUser.session && this.props.authenticatedUser.session.canSignOut && (
+                    {this.props.authenticatedUser.session?.canSignOut && (
                         <a href="/-/sign-out" className="dropdown-item">
                             Sign out
                         </a>
@@ -155,13 +148,13 @@ export class UserNavItem extends React.PureComponent<Props, State> {
         )
     }
 
-    private toggleIsOpen = () => this.setState(prevState => ({ isOpen: !prevState.isOpen }))
+    private toggleIsOpen = (): void => this.setState(previousState => ({ isOpen: !previousState.isOpen }))
 
     private onThemeChange: React.ChangeEventHandler<HTMLSelectElement> = event => {
         this.props.onThemePreferenceChange(event.target.value as ThemePreference)
     }
 
-    private onThemeCycle = () => {
+    private onThemeCycle = (): void => {
         this.props.onThemePreferenceChange(
             this.props.themePreference === ThemePreference.Dark ? ThemePreference.Light : ThemePreference.Dark
         )

@@ -11,6 +11,57 @@ const SettingsSchemaJSON = `{
   "allowComments": true,
   "type": "object",
   "properties": {
+    "experimentalFeatures": {
+      "title": "SettingsExperimentalFeatures",
+      "description": "Experimental features to enable or disable. Features that are now enabled by default are marked as deprecated.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "splitSearchModes": {
+          "description": "Enables toggling between the current omni search mode, and experimental interactive search mode.",
+          "type": "boolean",
+          "default": true,
+          "!go": { "pointer": true }
+        },
+        "codeInsights": {
+          "description": "Enables code insights on directory pages.",
+          "type": "boolean",
+          "default": false,
+          "!go": { "pointer": true }
+        },
+        "searchStats": {
+          "description": "Enables a new page that shows language statistics about the results for a search query.",
+          "type": "boolean",
+          "default": false,
+          "!go": { "pointer": true }
+        },
+        "showBadgeAttachments": {
+          "description": "Enables the UI indicators for code intelligence precision.",
+          "type": "boolean",
+          "default": true,
+          "!go": { "pointer": true }
+        },
+        "smartSearchField": {
+          "description": "Enables displaying a search field that provides syntax highlighting, hover tooltips and diagnostics for search queries.",
+          "type": "boolean",
+          "default": true,
+          "!go": { "pointer": true }
+        },
+        "copyQueryButton": {
+          "description": "Enables displaying the copy query button in the search bar when hovering over the global navigation bar.",
+          "type": "boolean",
+          "default": false,
+          "!go": { "pointer": true }
+        },
+        "showRepogroupHomepage": {
+          "description": "Enables the repository group homepage ",
+          "type": "boolean",
+          "default": false,
+          "!go": { "pointer": true }
+        }
+      },
+      "group": "Experimental"
+    },
     "search.savedQueries": {
       "description": "DEPRECATED: Saved search queries",
       "type": "array",
@@ -46,6 +97,12 @@ const SettingsSchemaJSON = `{
         "required": ["key", "description", "query"]
       }
     },
+    "search.globbing": {
+      "description": "Enables globbing for supported field values",
+      "type": "boolean",
+      "default": false,
+      "!go": { "pointer": true }
+    },
     "search.scopes": {
       "description": "Predefined search scopes",
       "type": "array",
@@ -66,6 +123,23 @@ const SettingsSchemaJSON = `{
       "type": "integer",
       "minimum": 0,
       "default": 1
+    },
+    "search.defaultPatternType": {
+      "description": "The default pattern type (literal or regexp) that search queries will be intepreted as.",
+      "type": "string",
+      "pattern": "literal|regexp"
+    },
+    "search.includeForks": {
+      "description": "Whether searches should include searching forked repositories.",
+      "type": "boolean",
+      "default": false,
+      "!go": { "pointer": true }
+    },
+    "search.includeArchived": {
+      "description": "Whether searches should include searching archived repositories.",
+      "type": "boolean",
+      "default": false,
+      "!go": { "pointer": true }
     },
     "quicklinks": {
       "description": "Links that should be accessible quickly from the home and search pages.",
@@ -109,6 +183,12 @@ const SettingsSchemaJSON = `{
       "type": "boolean",
       "default": true
     },
+    "alerts.hideObservabilitySiteAlerts": {
+      "description": "Disables observability-related site alert banners.",
+      "type": "boolean",
+      "default": true,
+      "!go": { "pointer": true }
+    },
     "extensions": {
       "description": "The Sourcegraph extensions to use. Enable an extension by adding a property ` + "`" + `\"my/extension\": true` + "`" + ` (where ` + "`" + `my/extension` + "`" + ` is the extension ID). Override a previously enabled extension and disable it by setting its value to ` + "`" + `false` + "`" + `.",
       "type": "object",
@@ -126,6 +206,18 @@ const SettingsSchemaJSON = `{
       "description": "Whether to use the code host's native hover tooltips when they exist (GitHub's jump-to-definition tooltips, for example).",
       "type": "boolean",
       "default": false
+    },
+    "search.uppercase": {
+      "description": "When active, any uppercase characters in the pattern will make the entire query case-sensitive.",
+      "type": "boolean",
+      "default": false,
+      "!go": { "pointer": true }
+    },
+    "search.migrateParser": {
+      "description": "If true, uses the new and/or-compatible parser for all search queries. It is a flag to aid transition to the new parser.",
+      "type": "boolean",
+      "default": false,
+      "!go": { "pointer": true }
     }
   },
   "definitions": {
@@ -171,6 +263,12 @@ const SettingsSchemaJSON = `{
         }
       }
     }
+  },
+  "search.hideSuggestions": {
+    "description": "Disable search suggestions below the search bar when constructing queries. Defaults to false.",
+    "type": "boolean",
+    "default": false,
+    "!go": { "pointer": true }
   }
 }
 `

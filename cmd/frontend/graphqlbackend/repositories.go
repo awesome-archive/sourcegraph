@@ -2,80 +2,73 @@ package graphqlbackend
 
 import (
 	"context"
-	"regexp"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/zoekt"
-	graphql "github.com/graph-gophers/graphql-go"
+	"github.com/graph-gophers/graphql-go"
 	"github.com/pkg/errors"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/gitserver"
-	"github.com/sourcegraph/sourcegraph/pkg/repoupdater"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/repoupdater"
+	"github.com/sourcegraph/sourcegraph/internal/search"
 )
 
 func (r *schemaResolver) Repositories(args *struct {
 	graphqlutil.ConnectionArgs
-	Query           *string
-	Names           *[]string
-	Enabled         bool // deprecated
-	Disabled        bool // deprecated
-	Cloned          bool
-	CloneInProgress bool
-	NotCloned       bool
-	Indexed         bool
-	NotIndexed      bool
-	OrderBy         string
-	Descending      bool
+	Query      *string
+	Names      *[]string
+	Cloned     bool
+	NotCloned  bool
+	Indexed    bool
+	NotIndexed bool
+	OrderBy    string
+	Descending bool
 }) (*repositoryConnectionResolver, error) {
-	// New call sites don't specify Enable and Disable. Assume if disabled
-	// isn't specified we want Enabled since all repos are enabled.
-	if !args.Disabled {
-		args.Enabled = true
-	}
-
 	opt := db.ReposListOptions{
-		Enabled: args.Enabled,
 		OrderBy: db.RepoListOrderBy{{
 			Field:      toDBRepoListColumn(args.OrderBy),
 			Descending: args.Descending,
 		}},
 	}
 	if args.Names != nil {
-		// Make an exact-match regexp for each name.
-		patterns := make([]string, len(*args.Names))
-		for i, name := range *args.Names {
-			patterns[i] = regexp.QuoteMeta(name)
-		}
-		opt.IncludePatterns = []string{"^(" + strings.Join(patterns, "|") + ")$"}
+		opt.Names = *args.Names
 	}
 	if args.Query != nil {
 		opt.Query = *args.Query
 	}
 	args.ConnectionArgs.Set(&opt.LimitOffset)
 	return &repositoryConnectionResolver{
-		opt:             opt,
-		cloned:          args.Cloned,
-		cloneInProgress: args.CloneInProgress,
-		notCloned:       args.NotCloned,
-		indexed:         args.Indexed,
-		notIndexed:      args.NotIndexed,
+		opt:        opt,
+		cloned:     args.Cloned,
+		notCloned:  args.NotCloned,
+		indexed:    args.Indexed,
+		notIndexed: args.NotIndexed,
 	}, nil
 }
 
+type TotalCountArgs struct {
+	Precise bool
+}
+
+type RepositoryConnectionResolver interface {
+	Nodes(ctx context.Context) ([]*RepositoryResolver, error)
+	TotalCount(ctx context.Context, args *TotalCountArgs) (*int32, error)
+	PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error)
+}
+
+var _ RepositoryConnectionResolver = &repositoryConnectionResolver{}
+
 type repositoryConnectionResolver struct {
-	opt             db.ReposListOptions
-	cloned          bool
-	cloneInProgress bool
-	notCloned       bool
-	indexed         bool
-	notIndexed      bool
+	opt        db.ReposListOptions
+	cloned     bool
+	notCloned  bool
+	indexed    bool
+	notIndexed bool
 
 	// cache results because they are used by multiple fields
 	once  sync.Once
@@ -88,7 +81,7 @@ func (r *repositoryConnectionResolver) compute(ctx context.Context) ([]*types.Re
 		opt2 := r.opt
 
 		if envvar.SourcegraphDotComMode() {
-			// Don't allow non-admins to perform huge queries on Sourcegraph.com.
+			// 🚨 SECURITY: Don't allow non-admins to perform huge queries on Sourcegraph.com.
 			if isSiteAdmin := backend.CheckCurrentUserIsSiteAdmin(ctx) == nil; !isSiteAdmin {
 				if opt2.LimitOffset == nil {
 					opt2.LimitOffset = &db.LimitOffset{Limit: 1000}
@@ -96,41 +89,37 @@ func (r *repositoryConnectionResolver) compute(ctx context.Context) ([]*types.Re
 			}
 		}
 
-		if opt2.LimitOffset != nil {
-			tmp := *opt2.LimitOffset
-			opt2.LimitOffset = &tmp
-			// We purposefully load more repos into memory than requested in
-			// order to save roundtrips to gitserver in case we need to do
-			// filtering by clone status.
-			// The trade-off here is memory/cpu vs. network roundtrips to
-			// database/gitserver and we choose smaller latency over smaller
-			// memory footprint.
-			// At the end of this method we return the requested number of
-			// repos.
-			// As for the number: 1250 is the result of local benchmarks where
-			// it yielded the best performance/resources tradeoff, before
-			// diminishing returns set in
-			opt2.Limit += 1250
-		}
-
 		var indexed map[string]*zoekt.Repository
-		searchIndexEnabled := IndexedSearch().Enabled()
+		searchIndexEnabled := search.Indexed().Enabled()
 		isIndexed := func(repo api.RepoName) bool {
 			if !searchIndexEnabled {
 				return true // do not need index
 			}
-			_, ok := indexed[strings.ToLower(string(repo))]
+			_, ok := indexed[string(repo)]
 			return ok
 		}
 		if searchIndexEnabled && (!r.indexed || !r.notIndexed) {
 			listCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 			var err error
-			indexed, err = IndexedSearch().ListAll(listCtx)
+			indexed, err = search.Indexed().ListAll(listCtx)
 			if err != nil {
 				r.err = err
 				return
 			}
+			// ensure we fetch atleast as many repos as we have indexed.
+			if opt2.LimitOffset != nil && opt2.LimitOffset.Limit < len(indexed) {
+				opt2.LimitOffset.Limit = len(indexed) * 2
+			}
+		}
+
+		if !r.cloned {
+			opt2.NoCloned = true
+		} else if !r.notCloned {
+			// notCloned is true by default.
+			// this condition is valid only if it has been
+			// explicitly set to false by the client.
+			opt2.OnlyCloned = true
 		}
 
 		for {
@@ -140,28 +129,6 @@ func (r *repositoryConnectionResolver) compute(ctx context.Context) ([]*types.Re
 				return
 			}
 			reposFromDB := len(repos)
-
-			if !r.cloned || !r.cloneInProgress || !r.notCloned {
-				// Query gitserver to filter by repository clone status.
-				repoNames := make([]api.RepoName, len(repos))
-				for i, repo := range repos {
-					repoNames[i] = repo.Name
-				}
-				response, err := gitserver.DefaultClient.RepoInfo(ctx, repoNames...)
-				if err != nil {
-					r.err = err
-					return
-				}
-				keepRepos := repos[:0]
-				for _, repo := range repos {
-					if info := response.Results[repo.Name]; info == nil {
-						continue
-					} else if (r.cloned && info.Cloned && !info.CloneInProgress) || (r.cloneInProgress && info.CloneInProgress) || (r.notCloned && !info.Cloned && !info.CloneInProgress) {
-						keepRepos = append(keepRepos, repo)
-					}
-				}
-				repos = keepRepos
-			}
 
 			if !r.indexed || !r.notIndexed {
 				keepRepos := repos[:0]
@@ -179,22 +146,16 @@ func (r *repositoryConnectionResolver) compute(ctx context.Context) ([]*types.Re
 			if opt2.LimitOffset == nil {
 				break
 			} else {
-				if len(r.repos) > r.opt.Limit {
-					// Cut off the repos we additionally loaded to save
-					// roundtrips to `gitserver` and only return the number
-					// that was requested.
-					// But, when possible, we add one more so we can detect if
-					// there is a "next page" that could be loaded
-					r.repos = r.repos[:r.opt.Limit+1]
-					break
-				}
-				if reposFromDB < r.opt.Limit {
+				// check if we filtered some repos and if
+				// we need to get more from the DB
+				if len(repos) >= r.opt.Limit || reposFromDB < r.opt.Limit {
 					break
 				}
 				opt2.Offset += opt2.Limit
 			}
 		}
 	})
+
 	return r.repos, r.err
 }
 
@@ -214,14 +175,10 @@ func (r *repositoryConnectionResolver) Nodes(ctx context.Context) ([]*Repository
 	return resolvers, nil
 }
 
-func (r *repositoryConnectionResolver) TotalCount(ctx context.Context, args *struct {
-	Precise bool
-}) (countptr *int32, err error) {
-	if isAdminErr := backend.CheckCurrentUserIsSiteAdmin(ctx); isAdminErr != nil {
-		if args.Precise {
-			// Only site admins can perform precise counts, because it is a slow operation.
-			return nil, isAdminErr
-		}
+func (r *repositoryConnectionResolver) TotalCount(ctx context.Context, args *TotalCountArgs) (countptr *int32, err error) {
+	// 🚨 SECURITY: Only site admins can do this, because a total repository count does not respect repository permissions.
+	if err := backend.CheckCurrentUserIsSiteAdmin(ctx); err != nil {
+		// TODO this should return err instead of null
 		return nil, nil
 	}
 
@@ -229,7 +186,7 @@ func (r *repositoryConnectionResolver) TotalCount(ctx context.Context, args *str
 		return &v
 	}
 
-	if !r.cloned || !r.cloneInProgress || !r.notCloned {
+	if !r.cloned || !r.notCloned {
 		// Don't support counting if filtering by clone status.
 		return nil, nil
 	}
@@ -264,7 +221,7 @@ func (r *repositoryConnectionResolver) PageInfo(ctx context.Context) (*graphqlut
 	if err != nil {
 		return nil, err
 	}
-	return graphqlutil.HasNextPage(r.opt.LimitOffset != nil && len(repos) > r.opt.Limit), nil
+	return graphqlutil.HasNextPage(r.opt.LimitOffset != nil && len(repos) >= r.opt.Limit), nil
 }
 
 func (r *schemaResolver) SetRepositoryEnabled(ctx context.Context, args *struct {
@@ -282,25 +239,10 @@ func (r *schemaResolver) SetRepositoryEnabled(ctx context.Context, args *struct 
 		return nil, err
 	}
 
-	// We only want to set the enabled state of a repo that isn't yet managed
-	// by the new syncer. Repo-updater returns the set of external services that
-	// were updated to exclude the given repo. If that set is empty, it means that
-	// the given repo isn't yet managed by the new syncer, so we proceed to update
-	// the enabled state regardless.
-	var done bool
 	if !args.Enabled {
-		resp, err := repoupdater.DefaultClient.ExcludeRepo(ctx, uint32(repo.repo.ID))
+		_, err := repoupdater.DefaultClient.ExcludeRepo(ctx, repo.repo.ID)
 		if err != nil {
 			return nil, errors.Wrapf(err, "repo-updater.exclude-repos")
-		}
-
-		// Have any external services been updated to exclude the given repo?
-		done = len(resp.ExternalServices) > 0
-	}
-
-	if !done {
-		if err = db.Repos.SetEnabled(ctx, repo.repo.ID, args.Enabled); err != nil {
-			return nil, err
 		}
 	}
 
@@ -315,57 +257,6 @@ func (r *schemaResolver) SetRepositoryEnabled(ctx context.Context, args *struct 
 		}
 	}
 
-	return &EmptyResponse{}, nil
-}
-
-func (r *schemaResolver) SetAllRepositoriesEnabled(ctx context.Context, args *struct {
-	Enabled bool
-}) (*EmptyResponse, error) {
-	// Only usable for self-hosted instances
-	if envvar.SourcegraphDotComMode() {
-		return nil, errors.New("Not available on sourcegraph.com")
-	}
-	// 🚨 SECURITY: Only site admins can enable/disable repositories, because it's a site-wide
-	// and semi-destructive action.
-	if err := backend.CheckCurrentUserIsSiteAdmin(ctx); err != nil {
-		return nil, err
-	}
-
-	var listArgs db.ReposListOptions
-	if args.Enabled {
-		listArgs = db.ReposListOptions{Disabled: true}
-	} else {
-		listArgs = db.ReposListOptions{Enabled: true}
-	}
-	reposList, err := db.Repos.List(ctx, listArgs)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, repo := range reposList {
-		if err := db.Repos.SetEnabled(ctx, repo.ID, args.Enabled); err != nil {
-			return nil, err
-		}
-	}
-	return &EmptyResponse{}, nil
-}
-
-func (r *schemaResolver) DeleteRepository(ctx context.Context, args *struct {
-	Repository graphql.ID
-}) (*EmptyResponse, error) {
-	// 🚨 SECURITY: Only site admins can delete repositories, because it's a site-wide
-	// and semi-destructive action.
-	if err := backend.CheckCurrentUserIsSiteAdmin(ctx); err != nil {
-		return nil, err
-	}
-
-	id, err := unmarshalRepositoryID(args.Repository)
-	if err != nil {
-		return nil, err
-	}
-	if err := db.Repos.Delete(ctx, id); err != nil {
-		return nil, err
-	}
 	return &EmptyResponse{}, nil
 }
 

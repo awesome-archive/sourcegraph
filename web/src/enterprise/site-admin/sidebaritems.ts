@@ -1,21 +1,14 @@
 import HeartIcon from 'mdi-react/HeartIcon'
-import PuzzleIcon from 'mdi-react/PuzzleIcon'
-import { authGroup, otherGroup, siteAdminSidebarGroups } from '../../site-admin/sidebaritems'
+import BrainIcon from 'mdi-react/BrainIcon'
+import {
+    otherGroup,
+    siteAdminSidebarGroups,
+    usersGroup,
+    repositoriesGroup,
+    overviewGroup,
+} from '../../site-admin/sidebaritems'
 import { SiteAdminSideBarGroup, SiteAdminSideBarGroups } from '../../site-admin/SiteAdminSidebar'
 import { SHOW_BUSINESS_FEATURES } from '../dotcom/productSubscriptions/features'
-
-const registryGroup: SiteAdminSideBarGroup = {
-    header: {
-        label: 'Registry',
-        icon: PuzzleIcon,
-    },
-    items: [
-        {
-            label: 'Extensions',
-            to: '/site-admin/registry/extensions',
-        },
-    ],
-}
 
 /**
  * Sidebar items that are only used on Sourcegraph.com.
@@ -42,47 +35,84 @@ const dotcomGroup: SiteAdminSideBarGroup = {
     condition: () => SHOW_BUSINESS_FEATURES,
 }
 
+const codeIntelGroup: SiteAdminSideBarGroup = {
+    header: { label: 'Code intelligence', icon: BrainIcon },
+    items: [
+        {
+            to: '/site-admin/code-intelligence/uploads',
+            label: 'Uploads',
+        },
+        {
+            to: '/site-admin/code-intelligence/indexes',
+            label: 'Auto indexing',
+            condition: () => Boolean(window.context?.sourcegraphDotComMode),
+        },
+    ],
+}
+
 export const enterpriseSiteAdminSidebarGroups: SiteAdminSideBarGroups = siteAdminSidebarGroups.reduce<
     SiteAdminSideBarGroups
 >((enterpriseGroups, group) => {
-    if (group === authGroup) {
+    if (group === overviewGroup) {
         return [
             ...enterpriseGroups,
-            // Extend auth group items
+            // Extend overview group items
             {
                 ...group,
                 items: [
+                    ...group.items,
                     {
-                        label: 'Providers',
+                        label: 'License',
+                        to: '/site-admin/license',
+                    },
+                ],
+            },
+        ]
+    }
+    if (group === repositoriesGroup) {
+        return [
+            ...enterpriseGroups,
+            group,
+            // Insert codeintel group after repositories group
+            codeIntelGroup,
+        ]
+    }
+    if (group === usersGroup) {
+        return [
+            ...enterpriseGroups,
+            // Extend users group items
+            {
+                ...group,
+                items: [
+                    ...group.items,
+                    {
+                        label: 'Auth providers',
                         to: '/site-admin/auth/providers',
                     },
                     {
                         label: 'External accounts',
                         to: '/site-admin/auth/external-accounts',
                     },
-                    ...group.items,
                 ],
             },
-            // Insert registry group after auth group
-            registryGroup,
         ]
     }
     if (group === otherGroup) {
         return [
             ...enterpriseGroups,
-            // Insert dotcom group before other group (on Sourcegraph.com)
-            dotcomGroup,
             // Extend other group items
             {
                 ...group,
                 items: [
-                    {
-                        label: 'License',
-                        to: '/site-admin/license',
-                    },
                     ...group.items,
+                    {
+                        label: 'Extensions',
+                        to: '/site-admin/registry/extensions',
+                    },
                 ],
             },
+            // Insert dotcom group after other group (on Sourcegraph.com)
+            dotcomGroup,
         ]
     }
     return [...enterpriseGroups, group]

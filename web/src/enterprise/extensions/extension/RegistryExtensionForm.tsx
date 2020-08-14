@@ -7,6 +7,8 @@ import {
     publisherName,
     RegistryPublisher,
 } from '../../../extensions/extension/extension'
+import { ErrorAlert } from '../../../components/alerts'
+import * as H from 'history'
 
 export const RegistryPublisherFormGroup: React.FunctionComponent<{
     className?: string
@@ -19,11 +21,12 @@ export const RegistryPublisherFormGroup: React.FunctionComponent<{
 
     disabled?: boolean
     onChange?: React.FormEventHandler<HTMLSelectElement>
-}> = ({ className = '', value, publishersOrError, disabled, onChange }) => (
+    history: H.History
+}> = ({ className = '', value, publishersOrError, disabled, onChange, history }) => (
     <div className={`form-group ${className}`}>
         <label htmlFor="extension-registry-create-extension-page__publisher">Publisher</label>
         {isErrorLike(publishersOrError) ? (
-            <div className="alert alert-danger">{publishersOrError.message}</div>
+            <ErrorAlert error={publishersOrError} history={history} />
         ) : (
             <select
                 id="extension-registry-create-extension-page__publisher"
@@ -36,9 +39,9 @@ export const RegistryPublisherFormGroup: React.FunctionComponent<{
                 {publishersOrError === 'loading' ? (
                     <option disabled={true}>Loading...</option>
                 ) : (
-                    publishersOrError.map((p, i) => (
-                        <option key={p.id} value={p.id}>
-                            {publisherName(p)}
+                    publishersOrError.map(publisher => (
+                        <option key={publisher.id} value={publisher.id}>
+                            {publisherName(publisher)}
                         </option>
                     ))
                 )}

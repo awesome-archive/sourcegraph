@@ -1,33 +1,36 @@
 import { from } from 'rxjs'
-import { distinctUntilChanged, filter, first, switchMap } from 'rxjs/operators'
-import { isDefined } from '../../util/types'
+import { distinctUntilChanged, filter, switchMap } from 'rxjs/operators'
+import { isDefined, isTaggedUnionMember } from '../../util/types'
 import { assertToJSON, collectSubscribableValues, integrationTestContext } from './testHelpers'
 
 describe('Selections (integration)', () => {
     describe('editor.selectionsChanged', () => {
         test('reflects changes to the current selections', async () => {
             const {
-                services: { editor: editorService },
+                services: { viewer: viewerService },
                 extensionAPI,
             } = await integrationTestContext()
-            const editor = (await from(editorService.editors)
-                .pipe(first())
-                .toPromise())[0]
+            const editor = viewerService.viewers.get('viewer#0')!
             const selectionChanges = from(extensionAPI.app.activeWindowChanges).pipe(
                 filter(isDefined),
                 switchMap(window => window.activeViewComponentChanges),
                 filter(isDefined),
+                filter(isTaggedUnionMember('type', 'CodeEditor' as const)),
                 distinctUntilChanged(),
                 switchMap(editor => editor.selectionsChanges)
             )
             const selectionValues = collectSubscribableValues(selectionChanges)
             const testValues = [
                 [{ start: 3, end: 5 }],
-                [{ start: 1, end: 10 }, { start: 25, end: 40 }, { start: 56, end: 57 }],
+                [
+                    { start: 1, end: 10 },
+                    { start: 25, end: 40 },
+                    { start: 56, end: 57 },
+                ],
                 [],
             ]
             for (const selections of testValues) {
-                editorService.setSelections(
+                viewerService.setSelections(
                     editor,
                     selections.map(({ start, end }) => ({
                         start: {
@@ -52,7 +55,9 @@ describe('Selections (integration)', () => {
                 await extensionAPI.internal.sync()
             }
             assertToJSON(
-                selectionValues.map(selections => selections.map(s => ({ start: s.start.line, end: s.end.line }))),
+                selectionValues.map(selections =>
+                    selections.map(selection => ({ start: selection.start.line, end: selection.end.line }))
+                ),
                 [[], ...testValues]
             )
         })

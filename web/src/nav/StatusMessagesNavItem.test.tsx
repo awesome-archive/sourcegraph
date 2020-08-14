@@ -1,48 +1,131 @@
 import React from 'react'
-import renderer from 'react-test-renderer'
-import { of, queueScheduler, Observable } from 'rxjs'
-import { setLinkComponent } from '../../../shared/src/components/Link'
+import { of, Observable } from 'rxjs'
 import * as GQL from '../../../shared/src/graphql/schema'
 import { StatusMessagesNavItem } from './StatusMessagesNavItem'
+import { createMemoryHistory } from 'history'
+import { mount } from 'enzyme'
+
+jest.mock('mdi-react/CloudAlertIcon', () => 'CloudAlertIcon')
+jest.mock('mdi-react/CloudCheckIcon', () => 'CloudCheckIcon')
+jest.mock('mdi-react/CloudSyncIcon', () => 'CloudSyncIcon')
 
 describe('StatusMessagesNavItem', () => {
-    setLinkComponent(props => <a {...props} />)
-    afterAll(() => setLinkComponent(() => null)) // reset global env for other tests
-
     test('no messages', () => {
-        const fetchMessages = (): Observable<GQL.IStatusMessage[]> => of([])
+        const fetchMessages = (): Observable<GQL.StatusMessage[]> => of([])
         expect(
-            renderer.create(<StatusMessagesNavItem scheduler={queueScheduler} fetchMessages={fetchMessages} />).toJSON()
+            mount(
+                <StatusMessagesNavItem
+                    fetchMessages={fetchMessages}
+                    isSiteAdmin={false}
+                    history={createMemoryHistory()}
+                />
+            )
         ).toMatchSnapshot()
     })
 
-    describe('one CLONING message', () => {
-        const message: GQL.IStatusMessage = {
-            __typename: 'StatusMessage',
-            type: GQL.StatusMessageType.CLONING,
+    describe('one CloningProgress message', () => {
+        const message: GQL.StatusMessage = {
+            __typename: 'CloningProgress',
             message: 'Currently cloning repositories...',
         }
 
-        const fetchMessages = (): Observable<GQL.IStatusMessage[]> => of([message])
+        const fetchMessages = (): Observable<GQL.StatusMessage[]> => of([message])
         test('as non-site admin', () => {
             expect(
-                renderer
-                    .create(<StatusMessagesNavItem scheduler={queueScheduler} fetchMessages={fetchMessages} />)
-                    .toJSON()
+                mount(
+                    <StatusMessagesNavItem
+                        fetchMessages={fetchMessages}
+                        isSiteAdmin={false}
+                        history={createMemoryHistory()}
+                    />
+                )
             ).toMatchSnapshot()
         })
 
         test('as site admin', () => {
             expect(
-                renderer
-                    .create(
-                        <StatusMessagesNavItem
-                            scheduler={queueScheduler}
-                            fetchMessages={fetchMessages}
-                            isSiteAdmin={true}
-                        />
-                    )
-                    .toJSON()
+                mount(
+                    <StatusMessagesNavItem
+                        fetchMessages={fetchMessages}
+                        isSiteAdmin={true}
+                        history={createMemoryHistory()}
+                    />
+                )
+            ).toMatchSnapshot()
+        })
+    })
+
+    describe('one ExternalServiceSyncError message', () => {
+        const message: GQL.StatusMessage = {
+            __typename: 'ExternalServiceSyncError',
+            message: 'failed to list organization kubernetes repos: request returned status 404: Not Found',
+            externalService: {
+                __typename: 'ExternalService',
+                id: 'abcd',
+                displayName: 'GitHub.com',
+                kind: GQL.ExternalServiceKind.GITHUB,
+                config: '{}',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                webhookURL: null,
+                warning: '',
+            },
+        }
+
+        const fetchMessages = () => of([message])
+        test('as non-site admin', () => {
+            expect(
+                mount(
+                    <StatusMessagesNavItem
+                        fetchMessages={fetchMessages}
+                        isSiteAdmin={false}
+                        history={createMemoryHistory()}
+                    />
+                )
+            ).toMatchSnapshot()
+        })
+
+        test('as site admin', () => {
+            expect(
+                mount(
+                    <StatusMessagesNavItem
+                        fetchMessages={fetchMessages}
+                        isSiteAdmin={true}
+                        history={createMemoryHistory()}
+                    />
+                )
+            ).toMatchSnapshot()
+        })
+    })
+
+    describe('one SyncError message', () => {
+        const message: GQL.StatusMessage = {
+            __typename: 'SyncError',
+            message: 'syncer.sync.store.upsert-repos: pg: unique constraint foobar',
+        }
+
+        const fetchMessages = () => of([message])
+        test('as non-site admin', () => {
+            expect(
+                mount(
+                    <StatusMessagesNavItem
+                        fetchMessages={fetchMessages}
+                        isSiteAdmin={false}
+                        history={createMemoryHistory()}
+                    />
+                )
+            ).toMatchSnapshot()
+        })
+
+        test('as site admin', () => {
+            expect(
+                mount(
+                    <StatusMessagesNavItem
+                        fetchMessages={fetchMessages}
+                        isSiteAdmin={true}
+                        history={createMemoryHistory()}
+                    />
+                )
             ).toMatchSnapshot()
         })
     })

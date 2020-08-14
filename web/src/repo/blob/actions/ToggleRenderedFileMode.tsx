@@ -21,33 +21,29 @@ export class ToggleRenderedFileMode extends React.PureComponent<Props> {
      * Reports whether the location's URL displays the blob as rendered or source.
      */
     public static getModeFromURL(location: H.Location): RenderMode {
-        const q = new URLSearchParams(location.search)
+        const searchParameters = new URLSearchParams(location.search)
 
-        if (!q.has(ToggleRenderedFileMode.URL_QUERY_PARAM)) {
-            const isDiscussions = new URLSearchParams(location.hash).get('tab') === 'discussions'
-            if (isDiscussions) {
-                return 'code'
-            }
+        if (!searchParameters.has(ToggleRenderedFileMode.URL_QUERY_PARAM)) {
             return undefined
         }
-        return q.get(ToggleRenderedFileMode.URL_QUERY_PARAM) === 'code' ? 'code' : 'rendered' // default to rendered
+        return searchParameters.get(ToggleRenderedFileMode.URL_QUERY_PARAM) === 'code' ? 'code' : 'rendered' // default to rendered
     }
 
     /**
      * Returns the URL that displays the blob using the specified mode.
      */
-    private static getURLForMode(location: H.Location, mode: RenderMode): { search: string } {
-        const q = new URLSearchParams(location.search)
+    private getURLForMode(location: H.Location, mode: RenderMode): H.Location {
+        const searchParameters = new URLSearchParams(location.search)
         if (mode === 'code') {
-            q.set(ToggleRenderedFileMode.URL_QUERY_PARAM, mode)
+            searchParameters.set(ToggleRenderedFileMode.URL_QUERY_PARAM, mode)
         } else {
-            q.delete(ToggleRenderedFileMode.URL_QUERY_PARAM)
+            searchParameters.delete(ToggleRenderedFileMode.URL_QUERY_PARAM)
         }
-        return { search: q.toString() }
+        return { ...location, search: searchParameters.toString() }
     }
 
-    public componentDidUpdate(prevProps: Props): void {
-        if (prevProps.mode !== this.props.mode) {
+    public componentDidUpdate(previousProps: Props): void {
+        if (previousProps.mode !== this.props.mode) {
             Tooltip.forceUpdate()
         }
     }
@@ -57,7 +53,7 @@ export class ToggleRenderedFileMode extends React.PureComponent<Props> {
 
         return (
             <LinkOrButton
-                to={ToggleRenderedFileMode.getURLForMode(this.props.location, otherMode)}
+                to={this.getURLForMode(this.props.location, otherMode)}
                 data-tooltip={otherMode === 'code' ? 'Show raw code file' : 'Show formatted file'}
             >
                 <EyeIcon className="icon-inline" />{' '}

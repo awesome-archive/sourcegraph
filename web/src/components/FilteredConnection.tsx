@@ -1,6 +1,6 @@
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
 import * as H from 'history'
-import { uniq, upperFirst } from 'lodash'
+import { uniq } from 'lodash'
 import * as React from 'react'
 import { combineLatest, merge, Observable, of, Subject, Subscription } from 'rxjs'
 import {
@@ -10,22 +10,25 @@ import {
     distinctUntilChanged,
     filter,
     map,
-    publishReplay,
-    refCount,
     skip,
     startWith,
     switchMap,
     takeUntil,
     tap,
+    scan,
+    share,
 } from 'rxjs/operators'
 import * as GQL from '../../../shared/src/graphql/schema'
 import { asError, ErrorLike, isErrorLike } from '../../../shared/src/util/errors'
 import { pluralize } from '../../../shared/src/util/strings'
 import { Form } from './Form'
 import { RadioButtons } from './RadioButtons'
+import { ErrorMessage } from './alerts'
+import { hasProperty } from '../../../shared/src/util/types'
 
 /** Checks if the passed value satisfies the GraphQL Node interface */
-const hasID = (obj: any): obj is { id: GQL.ID } => obj && typeof obj.id === 'string'
+const hasID = (value: unknown): value is { id: GQL.ID } =>
+    typeof value === 'object' && value !== null && hasProperty('id')(value) && typeof value.id === 'string'
 
 interface FilterProps {
     /** All filters. */
@@ -42,12 +45,17 @@ interface FilterState {}
 
 class FilteredConnectionFilterControl extends React.PureComponent<FilterProps, FilterState> {
     public render(): React.ReactFragment {
-        return <RadioButtons nodes={this.props.filters} selected={this.props.value} onChange={this.onChange} />
+        return (
+            <div className="filtered-connection-filter-control">
+                <RadioButtons nodes={this.props.filters} selected={this.props.value} onChange={this.onChange} />
+                {this.props.children}
+            </div>
+        )
     }
 
-    private onChange: React.ChangeEventHandler<HTMLInputElement> = e => {
-        const id = e.currentTarget.value
-        const filter = this.props.filters.find(f => f.id === id)!
+    private onChange: React.ChangeEventHandler<HTMLInputElement> = event => {
+        const id = event.currentTarget.value
+        const filter = this.props.filters.find(filter => filter.id === id)!
         this.props.onDidSelectFilter(filter)
     }
 }
@@ -80,13 +88,22 @@ interface ConnectionDisplayProps {
 
     /** The component displayed when the list of nodes is empty. */
     emptyElement?: JSX.Element
+
+    /** The component displayed when all nodes have been fetched. */
+    totalCountSummaryComponent?: React.ComponentType<{ totalCount: number }>
+    /**
+     * Set to true when the GraphQL response is expected to emit an `PageInfo.endCursor` value when
+     * there is a subsequent page of results. This will request the next page of results and append
+     * them onto the existing list of results instead of requesting twice as many results and
+     * replacing the existing results.
+     */
+    cursorPaging?: boolean
 }
 
 /**
  * Props for the FilteredConnection component's result nodes and associated summary/pagination controls.
  *
- * @template C The GraphQL connection type, such as GQL.IRepositoryConnection.
- * @template N The node type of the GraphQL connection, such as GQL.IRepository (if C is GQL.IRepositoryConnection)
+ * @template N The node type of the GraphQL connection, such as GQL.IRepository (if the connection is GQL.IRepositoryConnection)
  * @template NP Props passed to `nodeComponent` in addition to `{ node: N }`
  */
 interface ConnectionPropsCommon<N, NP = {}> extends ConnectionDisplayProps {
@@ -101,6 +118,9 @@ interface ConnectionPropsCommon<N, NP = {}> extends ConnectionDisplayProps {
 
     /** Props to pass to each nodeComponent in addition to `{ node: N }`. */
     nodeComponentProps?: NP
+
+    /** An element rendered as a sibling of the filters. */
+    additionalFilterElement?: React.ReactElement
 }
 
 /** State related to the ConnectionNodes component. */
@@ -109,6 +129,17 @@ interface ConnectionStateCommon {
     first: number
 
     connectionQuery?: string
+
+    /** The `PageInfo.endCursor` value from the previous request. */
+    after?: string
+
+    /**
+     * The number of results that were visible from previous requests. The initial request of
+     * a result set will load `visible` items, then will request `first` items on each subsequent
+     * request. This has the effect of loading the correct number of visible results when a URL
+     * is copied during pagination. This value is only useful with cursor-based paging.
+     */
+    visible?: number
 
     /**
      * Whether the connection is loading. It is not equivalent to connection === undefined because we preserve the
@@ -131,15 +162,17 @@ interface ConnectionNodesProps<C extends Connection<N>, N, NP = {}>
 class ConnectionNodes<C extends Connection<N>, N, NP = {}> extends React.PureComponent<ConnectionNodesProps<C, N, NP>> {
     public render(): JSX.Element | null {
         const NodeComponent = this.props.nodeComponent
-        const ListComponent: any = this.props.listComponent || 'ul' // TODO: remove cast when https://github.com/Microsoft/TypeScript/issues/28768 is fixed
+        const ListComponent = this.props.listComponent || 'ul'
         const HeadComponent = this.props.headComponent
         const FootComponent = this.props.footComponent
+        const TotalCountSummaryComponent = this.props.totalCountSummaryComponent
 
-        const hasNextPage =
-            this.props.connection &&
-            ((this.props.connection.pageInfo && this.props.connection.pageInfo.hasNextPage) ||
-                (typeof this.props.connection.totalCount === 'number' &&
-                    this.props.connection.nodes.length < this.props.connection.totalCount))
+        const hasNextPage = this.props.connection
+            ? this.props.connection.pageInfo
+                ? this.props.connection.pageInfo.hasNextPage
+                : typeof this.props.connection.totalCount === 'number' &&
+                  this.props.connection.nodes.length < this.props.connection.totalCount
+            : false
 
         let totalCount: number | null = null
         if (this.props.connection) {
@@ -162,12 +195,13 @@ class ConnectionNodes<C extends Connection<N>, N, NP = {}> extends React.PureCom
 
         let summary: React.ReactFragment | undefined
         if (
-            !this.props.loading &&
             this.props.connection &&
             (!this.props.noSummaryIfAllNodesVisible || this.props.connection.nodes.length === 0 || hasNextPage)
         ) {
             if (totalCount !== null && totalCount > 0) {
-                summary = (
+                summary = TotalCountSummaryComponent ? (
+                    <TotalCountSummaryComponent totalCount={totalCount} />
+                ) : (
                     <p className="filtered-connection__summary">
                         <small>
                             <span>
@@ -186,7 +220,7 @@ class ConnectionNodes<C extends Connection<N>, N, NP = {}> extends React.PureCom
                         </small>
                     </p>
                 )
-            } else if (this.props.connection.pageInfo && this.props.connection.pageInfo.hasNextPage) {
+            } else if (this.props.connection.pageInfo?.hasNextPage) {
                 // No total count to show, but it will show a 'Show more' button.
             } else if (totalCount === 0) {
                 summary = this.props.emptyElement || (
@@ -204,8 +238,8 @@ class ConnectionNodes<C extends Connection<N>, N, NP = {}> extends React.PureCom
             }
         }
 
-        const nodes = this.props.connection.nodes.map((node, i) => (
-            <NodeComponent key={hasID(node) ? node.id : i} node={node} {...this.props.nodeComponentProps!} />
+        const nodes = this.props.connection.nodes.map((node, index) => (
+            <NodeComponent key={hasID(node) ? node.id : index} node={node} {...this.props.nodeComponentProps!} />
         ))
 
         return (
@@ -222,8 +256,9 @@ class ConnectionNodes<C extends Connection<N>, N, NP = {}> extends React.PureCom
                 {!this.props.loading && !this.props.noShowMore && this.props.connection && hasNextPage && (
                     <button
                         type="button"
-                        className={`btn btn-secondary btn-sm filtered-connection__show-more ${this.props
-                            .showMoreClassName || ''}`}
+                        className={`btn btn-secondary btn-sm filtered-connection__show-more ${
+                            this.props.showMoreClassName || ''
+                        }`}
                         onClick={this.onClickShowMore}
                     >
                         Show more
@@ -233,7 +268,7 @@ class ConnectionNodes<C extends Connection<N>, N, NP = {}> extends React.PureCom
         )
     }
 
-    private onClickShowMore = () => this.props.onShowMore()
+    private onClickShowMore = (): void => this.props.onShowMore()
 }
 
 /**
@@ -271,8 +306,8 @@ interface FilteredConnectionDisplayProps extends ConnectionDisplayProps {
     /** Autofocuses the filter input field. */
     autoFocus?: boolean
 
-    /** Whether we will update the URL query string to reflect the filter and pagination state or not. */
-    shouldUpdateURLQuery?: boolean
+    /** Whether we will use the URL query string to reflect the filter and pagination state or not. */
+    useURLQuery?: boolean
 
     /**
      * Filters to display next to the filter input field.
@@ -280,6 +315,12 @@ interface FilteredConnectionDisplayProps extends ConnectionDisplayProps {
      * Filters are mutually exclusive.
      */
     filters?: FilteredConnectionFilter[]
+
+    /**
+     * The filter to select by default. If not supplied, this defaults to the first
+     * filter defined in the list.
+     */
+    defaultFilter?: string
 
     /** Called when a filter is selected and on initial render. */
     onFilterSelect?: (filterID: string | undefined) => void
@@ -307,6 +348,7 @@ interface FilteredConnectionProps<C extends Connection<N>, N, NP = {}>
  */
 export interface FilteredConnectionQueryArgs {
     first?: number
+    after?: string
     query?: string
 }
 
@@ -361,9 +403,10 @@ export interface Connection<N> {
 
     /**
      * If set, indicates whether there is a next page. Not all GraphQL XyzConnection types return
-     * pageInfo (if not, then they generally all do return totalCount).
+     * pageInfo (if not, then they generally all do return totalCount). If there is a cursor to use
+     * on a subsequent request it is also provided here.
      */
-    pageInfo?: { hasNextPage: boolean }
+    pageInfo?: { hasNextPage: boolean; endCursor?: string | null }
 
     /**
      * If set, this error is displayed. Even when there is an error, the results are still displayed.
@@ -379,9 +422,9 @@ const QUERY_KEY = 'query'
  * "connection" because it is intended for use with GraphQL, which calls it that
  * (see http://graphql.org/learn/pagination/).
  *
- * @template C The GraphQL connection type, such as GQL.IRepositoryConnection.
- * @template N The node type of the GraphQL connection, such as GQL.IRepository (if C is GQL.IRepositoryConnection)
+ * @template N The node type of the GraphQL connection, such as `GQL.IRepository` (if `C` is `GQL.IRepositoryConnection`)
  * @template NP Props passed to `nodeComponent` in addition to `{ node: N }`
+ * @template C The GraphQL connection type, such as `GQL.IRepositoryConnection`.
  */
 export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection<N>> extends React.PureComponent<
     FilteredConnectionProps<C, N, NP>,
@@ -389,7 +432,7 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
 > {
     public static defaultProps: Partial<FilteredConnectionProps<any, any>> = {
         defaultFirst: 20,
-        shouldUpdateURLQuery: true,
+        useURLQuery: true,
     }
 
     private queryInputChanges = new Subject<string>()
@@ -403,12 +446,29 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
     constructor(props: FilteredConnectionProps<C, N, NP>) {
         super(props)
 
-        const q = new URLSearchParams(this.props.location.search)
+        const searchParameters = new URLSearchParams(this.props.location.search)
+
+        // Note: in the initial state, do not set `after` from the URL, as this doesn't
+        // track the number of results on the previous page. This makes the count look
+        // broken when coming to a page in the middle of a set of results.
+        //
+        // For example:
+        //   (1) come to page with first = 20
+        //   (2) set first and after cursor in URL
+        //   (3) reload page; will skip 20 results but will display (first 20 of X)
+        //
+        // Instead, we use `ConnectionStateCommon.visible` to load the correct number of
+        // visible results on the initial request.
+
         this.state = {
             loading: true,
-            query: (!this.props.hideSearch && q.get(QUERY_KEY)) || '',
-            activeFilter: getFilterFromURL(q, this.props.filters),
-            first: parseQueryInt(q, 'first') || this.props.defaultFirst!,
+            query: (!this.props.hideSearch && this.props.useURLQuery && searchParameters.get(QUERY_KEY)) || '',
+            activeFilter:
+                (this.props.useURLQuery &&
+                    getFilterFromURL(searchParameters, this.props.filters, this.props.defaultFilter)) ||
+                undefined,
+            first: (this.props.useURLQuery && parseQueryInt(searchParameters, 'first')) || this.props.defaultFirst!,
+            visible: (this.props.useURLQuery && parseQueryInt(searchParameters, 'visible')) || 0,
         }
     }
 
@@ -423,7 +483,12 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
             debounceTime(200),
             startWith(this.state.query)
         )
-        const refreshRequests = new Subject<void>()
+
+        /**
+         * Emits `{ forceRefresh: false }` when loading a subsequent page (keeping the existing result set),
+         * and emits `{ forceRefresh: true }` on all other refresh conditions (clearing the existing result set).
+         */
+        const refreshRequests = new Subject<{ forceRefresh: boolean }>()
 
         this.subscriptions.add(
             activeFilterChanges
@@ -443,78 +508,144 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
             this.activeFilterChanges.subscribe(filter => this.setState({ activeFilter: filter }))
         )
 
-        // Track the last query and filter we used. We only want to show the loader if these change,
-        // not when a refresh is requested for the same query/filter (or else there would be jitter).
-        let lastQuery: string | undefined
-        let lastFilter: FilteredConnectionFilter | undefined
         this.subscriptions.add(
-            combineLatest([queryChanges, activeFilterChanges, refreshRequests.pipe(startWith<void>(undefined))])
+            combineLatest([
+                queryChanges,
+                activeFilterChanges,
+                refreshRequests.pipe(
+                    startWith<{ forceRefresh: boolean }>({ forceRefresh: false })
+                ),
+            ])
                 .pipe(
-                    tap(([query, filter]) => {
-                        if (this.props.shouldUpdateURLQuery) {
-                            this.props.history.replace({
-                                search: this.urlQuery({ query, filter }),
-                                hash: this.props.location.hash,
-                            })
+                    // Track whether the query or the active filter changed
+                    scan<
+                        [string, FilteredConnectionFilter | undefined, { forceRefresh: boolean }],
+                        {
+                            query: string
+                            filter: FilteredConnectionFilter | undefined
+                            shouldRefresh: boolean
+                            queryCount: number
                         }
-                    }),
-                    switchMap(([query, filter]) => {
-                        type PartialStateUpdate = Pick<
-                            FilteredConnectionState<C, N>,
-                            'connectionOrError' | 'loading' | 'connectionQuery'
-                        >
-
+                    >(
+                        ({ query, filter, queryCount }, [currentQuery, currentFilter, { forceRefresh }]) => ({
+                            query: currentQuery,
+                            filter: currentFilter,
+                            shouldRefresh: forceRefresh || query !== currentQuery || filter !== currentFilter,
+                            queryCount: queryCount + 1,
+                        }),
+                        {
+                            query: this.state.query,
+                            filter: undefined,
+                            shouldRefresh: false,
+                            queryCount: 0,
+                        }
+                    ),
+                    switchMap(({ query, filter, shouldRefresh, queryCount }) => {
                         const result = this.props
                             .queryConnection({
-                                first: this.state.first,
+                                // If this is our first query and we were supplied a value for `visible`,
+                                // load that many results. If we weren't given such a value or this is a
+                                // subsequent request, only ask for one page of results.
+                                first: (queryCount === 1 && this.state.visible) || this.state.first,
+                                after: shouldRefresh ? undefined : this.state.after,
                                 query,
                                 ...(filter ? filter.args : {}),
                             })
                             .pipe(
                                 catchError(error => [asError(error)]),
                                 map(
-                                    (c): PartialStateUpdate => ({
-                                        connectionOrError: c,
+                                    (connectionOrError): PartialStateUpdate => ({
+                                        connectionOrError,
                                         connectionQuery: query,
                                         loading: false,
                                     })
                                 ),
-                                publishReplay<PartialStateUpdate>(),
-                                refCount()
+                                share()
                             )
 
-                        const showLoading = query !== lastQuery || filter !== lastFilter
-                        lastQuery = query
-                        lastFilter = filter
-                        return showLoading
+                        return (shouldRefresh
                             ? merge(
                                   result,
-                                  of({ connectionOrError: undefined, loading: true }).pipe(
-                                      delay(250),
-                                      takeUntil(result)
-                                  )
+                                  of({
+                                      connectionOrError: undefined,
+                                      loading: true,
+                                  }).pipe(delay(250), takeUntil(result))
                               )
                             : result
+                        ).pipe(map(stateUpdate => ({ shouldRefresh, ...stateUpdate })))
                     }),
-                    tap(({ connectionOrError }) => {
+                    scan<PartialStateUpdate & { shouldRefresh: boolean }, PartialStateUpdate & { previousPage: N[] }>(
+                        ({ previousPage }, { shouldRefresh, connectionOrError, ...rest }) => {
+                            let nodes: N[] = previousPage
+                            let after: string | undefined
+
+                            if (this.props.cursorPaging && connectionOrError && !isErrorLike(connectionOrError)) {
+                                if (!shouldRefresh) {
+                                    connectionOrError.nodes = previousPage.concat(connectionOrError.nodes)
+                                }
+
+                                const pageInfo = connectionOrError.pageInfo
+                                nodes = connectionOrError.nodes
+                                after = pageInfo?.endCursor || undefined
+                            }
+
+                            return {
+                                connectionOrError,
+                                previousPage: nodes,
+                                after,
+                                ...rest,
+                            }
+                        },
+                        {
+                            previousPage: [],
+                            after: undefined,
+                            connectionOrError: undefined,
+                            connectionQuery: undefined,
+                            loading: true,
+                        }
+                    )
+                )
+                .subscribe(
+                    ({ connectionOrError, previousPage, ...rest }) => {
+                        if (this.props.useURLQuery) {
+                            this.props.history.replace({
+                                search: this.urlQuery({ visible: previousPage.length }),
+                                hash: this.props.location.hash,
+                            })
+                        }
                         if (this.props.onUpdate) {
                             this.props.onUpdate(connectionOrError)
                         }
-                    })
+                        this.setState({ connectionOrError, ...rest })
+                    },
+                    error => console.error(error)
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), err => console.error(err))
         )
 
+        type PartialStateUpdate = Pick<
+            FilteredConnectionState<C, N>,
+            'connectionOrError' | 'connectionQuery' | 'loading' | 'after'
+        >
         this.subscriptions.add(
             this.showMoreClicks
-                .pipe(map(() => this.state.first * 2))
-                .subscribe(first => this.setState({ first, loading: true }, () => refreshRequests.next()))
+                .pipe(
+                    map(() =>
+                        // If we're doing cursor paging, we rely on the `endCursor` from the previous
+                        // response's `PageInfo` object to make our next request. Otherwise, we'll
+                        // fallback to our legacy 'request-more' paging technique and not supply a
+                        // cursor to the subsequent request.
+                        ({ first: this.props.cursorPaging ? this.state.first : this.state.first * 2 })
+                    )
+                )
+                .subscribe(({ first }) =>
+                    this.setState({ first, loading: true }, () => refreshRequests.next({ forceRefresh: false }))
+                )
         )
 
         if (this.props.updates) {
             this.subscriptions.add(
-                this.props.updates.subscribe(c => {
-                    this.setState({ loading: true }, () => refreshRequests.next())
+                this.props.updates.subscribe(() => {
+                    this.setState({ loading: true }, () => refreshRequests.next({ forceRefresh: true }))
                 })
             )
         }
@@ -523,10 +654,15 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
             this.componentUpdates
                 .pipe(
                     distinctUntilChanged((a, b) => a.updateOnChange === b.updateOnChange),
-                    filter(({ updateOnChange }) => updateOnChange !== undefined)
+                    filter(({ updateOnChange }) => updateOnChange !== undefined),
+                    // Skip the very first emission as the FilteredConnection already fetches on component creation.
+                    // Otherwise, 2 requests would be triggered immediately.
+                    skip(1)
                 )
                 .subscribe(() => {
-                    this.setState({ loading: true, connectionOrError: undefined }, () => refreshRequests.next())
+                    this.setState({ loading: true, connectionOrError: undefined }, () =>
+                        refreshRequests.next({ forceRefresh: true })
+                    )
                 })
         )
 
@@ -540,33 +676,49 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
                     tap(() => this.focusFilter())
                 )
                 .subscribe(() =>
-                    this.setState({ loading: true, connectionOrError: undefined }, () => refreshRequests.next())
+                    this.setState({ loading: true, connectionOrError: undefined }, () =>
+                        refreshRequests.next({ forceRefresh: true })
+                    )
                 )
         )
         this.componentUpdates.next(this.props)
     }
 
-    private urlQuery(arg: { first?: number; query?: string; filter?: FilteredConnectionFilter }): string {
-        if (!arg.first) {
-            arg.first = this.state.first
+    private urlQuery({
+        first,
+        query,
+        filter,
+        visible,
+    }: {
+        first?: number
+        query?: string
+        filter?: FilteredConnectionFilter
+        visible?: number
+    }): string {
+        if (!first) {
+            first = this.state.first
         }
-        if (!arg.query) {
-            arg.query = this.state.query
+        if (!query) {
+            query = this.state.query
         }
-        if (!arg.filter) {
-            arg.filter = this.state.activeFilter
+        if (!filter) {
+            filter = this.state.activeFilter
         }
-        const q = new URLSearchParams()
-        if (arg.query) {
-            q.set(QUERY_KEY, arg.query)
+        const searchParameters = new URLSearchParams(this.props.location.search)
+        if (query) {
+            searchParameters.set(QUERY_KEY, query)
         }
-        if (arg.first !== this.props.defaultFirst) {
-            q.set('first', String(arg.first))
+
+        if (first !== this.props.defaultFirst) {
+            searchParameters.set('first', String(first))
         }
-        if (arg.filter && this.props.filters && arg.filter !== this.props.filters[0]) {
-            q.set('filter', arg.filter.id)
+        if (filter && this.props.filters && filter !== this.props.filters[0]) {
+            searchParameters.set('filter', filter.id)
         }
-        return q.toString()
+        if (visible !== 0 && visible !== first) {
+            searchParameters.set('visible', String(visible))
+        }
+        return searchParameters.toString()
     }
 
     public componentDidUpdate(): void {
@@ -593,8 +745,9 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
         const compactnessClass = `filtered-connection--${this.props.compact ? 'compact' : 'noncompact'}`
         return (
             <div
-                className={`filtered-connection e2e-filtered-connection ${compactnessClass} ${this.props.className ||
-                    ''}`}
+                className={`filtered-connection test-filtered-connection ${compactnessClass} ${
+                    this.props.className || ''
+                }`}
             >
                 {(!this.props.hideSearch || this.props.filters) && (
                     <Form className="filtered-connection__form" onSubmit={this.onSubmit}>
@@ -614,21 +767,24 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
                                 spellCheck={false}
                             />
                         )}
-                        {this.props.filters && this.state.activeFilter && (
+                        {this.props.filters && this.state.activeFilter ? (
                             <FilteredConnectionFilterControl
                                 filters={this.props.filters}
                                 onDidSelectFilter={this.onDidSelectFilter}
                                 value={this.state.activeFilter.id}
-                            />
+                            >
+                                {this.props.additionalFilterElement}
+                            </FilteredConnectionFilterControl>
+                        ) : (
+                            this.props.additionalFilterElement
                         )}
                     </Form>
                 )}
                 {errors.length > 0 && (
                     <div className="alert alert-danger filtered-connection__error">
-                        {errors.map((m, i) => (
-                            <React.Fragment key={i}>
-                                {upperFirst(m)}
-                                <br />
+                        {errors.map((error, index) => (
+                            <React.Fragment key={index}>
+                                <ErrorMessage error={error} history={this.props.history} />
                             </React.Fragment>
                         ))}
                     </div>
@@ -654,10 +810,11 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
                         onShowMore={this.onClickShowMore}
                         location={this.props.location}
                         emptyElement={this.props.emptyElement}
+                        totalCountSummaryComponent={this.props.totalCountSummaryComponent}
                     />
                 )}
                 {this.state.loading && (
-                    <span className="filtered-connection__loader e2e-filtered-connection__loader">
+                    <span className="filtered-connection__loader test-filtered-connection__loader">
                         <LoadingSpinner className="icon-inline" />
                     </span>
                 )}
@@ -665,59 +822,60 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
         )
     }
 
-    private setFilterRef = (e: HTMLInputElement | null) => {
-        this.filterRef = e
-        if (e && this.props.autoFocus) {
+    private setFilterRef = (element: HTMLInputElement | null): void => {
+        this.filterRef = element
+        if (element && this.props.autoFocus) {
             // TODO(sqs): The 30 msec delay is needed, or else the input is not
             // reliably focused. Find out why.
-            setTimeout(() => e.focus(), 30)
+            setTimeout(() => element.focus(), 30)
         }
     }
 
-    private focusFilter = () => {
+    private focusFilter = (): void => {
         if (this.filterRef) {
             this.filterRef.focus()
         }
     }
 
-    private onSubmit: React.FormEventHandler<HTMLFormElement> = e => {
+    private onSubmit: React.FormEventHandler<HTMLFormElement> = event => {
         // Do nothing. The <input onChange> handler will pick up any changes shortly.
-        e.preventDefault()
+        event.preventDefault()
     }
 
-    private onChange: React.ChangeEventHandler<HTMLInputElement> = e => {
-        this.queryInputChanges.next(e.currentTarget.value)
+    private onChange: React.ChangeEventHandler<HTMLInputElement> = event => {
+        this.queryInputChanges.next(event.currentTarget.value)
     }
 
-    private onDidSelectFilter = (filter: FilteredConnectionFilter) => this.activeFilterChanges.next(filter)
+    private onDidSelectFilter = (filter: FilteredConnectionFilter): void => this.activeFilterChanges.next(filter)
 
-    private onClickShowMore = () => {
+    private onClickShowMore = (): void => {
         this.showMoreClicks.next()
     }
 }
 
-function parseQueryInt(q: URLSearchParams, name: string): number | null {
-    const s = q.get(name)
-    if (s === null) {
+function parseQueryInt(searchParameters: URLSearchParams, name: string): number | null {
+    const valueString = searchParameters.get(name)
+    if (valueString === null) {
         return null
     }
-    const n = parseInt(s, 10)
-    if (n > 0) {
-        return n
+    const valueNumber = parseInt(valueString, 10)
+    if (valueNumber > 0) {
+        return valueNumber
     }
     return null
 }
 
 function getFilterFromURL(
-    q: URLSearchParams,
-    filters: FilteredConnectionFilter[] | undefined
+    searchParameters: URLSearchParams,
+    filters: FilteredConnectionFilter[] | undefined,
+    defaultFilterId: string | undefined
 ): FilteredConnectionFilter | undefined {
     if (filters === undefined || filters.length === 0) {
         return undefined
     }
-    const id = q.get('filter')
+    const id = searchParameters.get('filter') || defaultFilterId
     if (id !== null) {
-        const filter = filters.find(f => f.id === id)
+        const filter = filters.find(filter => filter.id === id)
         if (filter) {
             return filter
         }

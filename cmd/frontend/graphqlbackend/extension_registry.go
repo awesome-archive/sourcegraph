@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	graphql "github.com/graph-gophers/graphql-go"
+	"github.com/graph-gophers/graphql-go"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
-	"github.com/sourcegraph/sourcegraph/pkg/conf"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 )
 
 var ErrExtensionsDisabled = errors.New("extensions are disabled in site configuration (contact the site admin to enable extensions)")
@@ -16,7 +16,7 @@ func (r *schemaResolver) ExtensionRegistry(ctx context.Context) (ExtensionRegist
 		if !ExtensionRegistry.ImplementsLocalExtensionRegistry() {
 			// The OSS build doesn't implement a local extension registry, so the reason for
 			// extensions being disabled is probably that the OSS build is in use.
-			return nil, errors.New("no extension registry is available (use Sourcegraph Core or Sourcegraph Enterprise to access the Sourcegraph extension registry and/or to host a private internal extension registry)")
+			return nil, errors.New("no extension registry is available (use Sourcegraph Free or Sourcegraph Enterprise to access the Sourcegraph extension registry and/or to host a private internal extension registry)")
 		}
 
 		return nil, ErrExtensionsDisabled

@@ -90,8 +90,9 @@ export class GitCommitNode extends React.PureComponent<GitCommitNodeProps, State
         return (
             <div
                 key={this.props.node.id}
-                className={`git-commit-node ${this.props.compact ? 'git-commit-node--compact' : ''} ${this.props
-                    .className || ''}`}
+                className={`git-commit-node ${this.props.compact ? 'git-commit-node--compact' : ''} ${
+                    this.props.className || ''
+                }`}
             >
                 <div className="git-commit-node__row git-commit-node__main">
                     {!this.props.compact ? (
@@ -172,9 +173,9 @@ export class GitCommitNode extends React.PureComponent<GitCommitNodeProps, State
                                               )}`}
                                         :
                                     </span>{' '}
-                                    {this.props.node.parents.map((parent, i) => (
+                                    {this.props.node.parents.map((parent, index) => (
                                         <Link
-                                            key={i}
+                                            key={index}
                                             className="git-ref-tag-2 git-commit-node__sha-and-parents-parent"
                                             to={parent.url}
                                         >
@@ -192,9 +193,9 @@ export class GitCommitNode extends React.PureComponent<GitCommitNodeProps, State
         )
     }
 
-    private toggleShowCommitMessageBody = () => {
+    private toggleShowCommitMessageBody = (): void => {
         eventLogger.log('CommitBodyToggled')
-        this.setState(prevState => ({ showCommitMessageBody: !prevState.showCommitMessageBody }))
+        this.setState(previousState => ({ showCommitMessageBody: !previousState.showCommitMessageBody }))
     }
 
     private copyToClipboard = (): void => {

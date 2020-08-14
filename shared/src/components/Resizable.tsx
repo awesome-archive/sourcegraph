@@ -2,7 +2,7 @@ import * as React from 'react'
 import { Subject, Subscription } from 'rxjs'
 import { debounceTime, distinctUntilChanged } from 'rxjs/operators'
 
-interface Props<C extends React.ReactElement<any> = React.ReactElement<any>> {
+interface Props<C extends React.ReactElement = React.ReactElement> {
     className?: string
 
     /**
@@ -38,7 +38,7 @@ interface State {
 /**
  * Wraps an item in a flexbox and makes it resizable.
  */
-export class Resizable<C extends React.ReactElement<any>> extends React.PureComponent<Props<C>, State> {
+export class Resizable<C extends React.ReactElement> extends React.PureComponent<Props<C>, State> {
     private static STORAGE_KEY_PREFIX = 'Resizable:'
 
     private sizeUpdates = new Subject<number>()
@@ -56,11 +56,11 @@ export class Resizable<C extends React.ReactElement<any>> extends React.PureComp
     }
 
     private getSize(): number {
-        const v = localStorage.getItem(`${Resizable.STORAGE_KEY_PREFIX}${this.props.storageKey}`)
-        if (v !== null) {
-            const n = parseInt(v, 10)
-            if (n >= 0) {
-                return n
+        const storedSize = localStorage.getItem(`${Resizable.STORAGE_KEY_PREFIX}${this.props.storageKey}`)
+        if (storedSize !== null) {
+            const sizeNumber = parseInt(storedSize, 10)
+            if (sizeNumber >= 0) {
+                return sizeNumber
             }
         }
         return this.props.defaultSize
@@ -72,12 +72,7 @@ export class Resizable<C extends React.ReactElement<any>> extends React.PureComp
 
     public componentDidMount(): void {
         this.subscriptions.add(
-            this.sizeUpdates
-                .pipe(
-                    distinctUntilChanged(),
-                    debounceTime(250)
-                )
-                .subscribe(size => this.setSize(size))
+            this.sizeUpdates.pipe(distinctUntilChanged(), debounceTime(250)).subscribe(size => this.setSize(size))
         )
     }
 
@@ -109,31 +104,33 @@ export class Resizable<C extends React.ReactElement<any>> extends React.PureComp
         )
     }
 
-    private setContainerRef = (e: HTMLElement | null) => (this.containerRef = e)
+    private setContainerRef = (event: HTMLElement | null): void => {
+        this.containerRef = event
+    }
 
-    private onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-        e.preventDefault()
+    private onMouseDown = (event: React.MouseEvent<HTMLDivElement>): void => {
+        event.preventDefault()
         if (!this.state.resizing) {
             this.setState({ resizing: true })
         }
     }
 
-    private onMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
-        e.preventDefault()
+    private onMouseUp = (event: React.MouseEvent<HTMLDivElement>): void => {
+        event.preventDefault()
         if (this.state.resizing) {
             this.setState({ resizing: false })
         }
     }
 
-    private onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-        e.preventDefault()
+    private onMouseMove = (event: React.MouseEvent<HTMLDivElement>): void => {
+        event.preventDefault()
         if (this.state.resizing && this.containerRef) {
             let size = isHorizontal(this.props.handlePosition)
                 ? this.props.handlePosition === 'right'
-                    ? e.pageX - this.containerRef.getBoundingClientRect().left
-                    : this.containerRef.getBoundingClientRect().right - e.pageX
-                : this.containerRef.getBoundingClientRect().bottom - e.pageY
-            if (e.shiftKey) {
+                    ? event.pageX - this.containerRef.getBoundingClientRect().left
+                    : this.containerRef.getBoundingClientRect().right - event.pageX
+                : this.containerRef.getBoundingClientRect().bottom - event.pageY
+            if (event.shiftKey) {
                 size = Math.ceil(size / 20) * 20
             }
             this.setState({ size })

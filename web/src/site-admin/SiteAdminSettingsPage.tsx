@@ -5,21 +5,26 @@ import { PlatformContextProps } from '../../../shared/src/platform/context'
 import { SettingsCascadeProps } from '../../../shared/src/settings/settings'
 import { PageTitle } from '../components/PageTitle'
 import { SettingsArea } from '../settings/SettingsArea'
+import { ThemeProps } from '../../../shared/src/theme'
+import { TelemetryProps } from '../../../shared/src/telemetry/telemetryService'
 
-interface Props extends RouteComponentProps<{}>, PlatformContextProps, SettingsCascadeProps {
+interface Props
+    extends RouteComponentProps<{}>,
+        PlatformContextProps,
+        SettingsCascadeProps,
+        ThemeProps,
+        TelemetryProps {
     authenticatedUser: GQL.IUser
-    isLightTheme: boolean
     site: Pick<GQL.ISite, '__typename' | 'id'>
 }
 
 export const SiteAdminSettingsPage: React.FunctionComponent<Props> = props => (
     <>
-        <PageTitle title="Site settings" />
+        <PageTitle title="Global settings" />
         <SettingsArea
             {...props}
             subject={props.site}
             authenticatedUser={props.authenticatedUser}
-            className="mt-3"
             extraHeader={
                 <p>
                     Global settings apply to all organizations and users. Settings for a user or organization override

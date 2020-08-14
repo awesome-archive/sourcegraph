@@ -1,5 +1,5 @@
-import { from } from 'rxjs'
-import { distinctUntilChanged, filter, map, switchMap, take, toArray } from 'rxjs/operators'
+import { from, of } from 'rxjs'
+import { filter, map, switchMap, take, toArray, first } from 'rxjs/operators'
 import { ViewComponent, Window } from 'sourcegraph'
 import { isDefined } from '../../util/types'
 import { TextModel } from '../client/services/modelService'
@@ -24,32 +24,29 @@ describe('Windows (integration)', () => {
     })
 
     describe('app.activeWindowChanges', () => {
-        test('reflects changes to the active window', async () => {
+        // Skipped, as sourcegraph.app.activeWindow is always defined.
+        test.skip('reflects changes to the active window', async () => {
             const {
-                services: { editor: editorService, model: modelService },
+                services: { viewer: viewerService, model: modelService },
                 extensionAPI,
             } = await integrationTestContext(undefined, {
                 roots: [],
-                editors: [],
+                viewers: [],
             })
+            expect(extensionAPI.app.activeWindow).toBeUndefined()
             modelService.addModel({
                 uri: 'u',
                 languageId: 'l',
                 text: 't',
             })
-            editorService.addEditor({
+            viewerService.addViewer({
                 type: 'CodeEditor',
                 resource: 'u',
                 selections: [],
                 isActive: true,
             })
-            const values = await from(extensionAPI.app.activeWindowChanges)
-                .pipe(
-                    take(1),
-                    toArray()
-                )
-                .toPromise()
-            assertToJSON(values.map(w => !!w), [true])
+            await from(extensionAPI.app.activeWindowChanges).pipe(filter(isDefined), first()).toPromise()
+            expect(extensionAPI.app.activeWindow).toBeTruthy()
         })
     })
 
@@ -72,12 +69,12 @@ describe('Windows (integration)', () => {
 
         test('adds new text documents', async () => {
             const {
-                services: { editor: editorService, model: modelService },
+                services: { viewer: viewerService, model: modelService },
                 extensionAPI,
-            } = await integrationTestContext(undefined, { editors: [], roots: [] })
+            } = await integrationTestContext(undefined, { viewers: [], roots: [] })
 
             modelService.addModel({ uri: 'file:///f2', languageId: 'l2', text: 't2' })
-            editorService.addEditor({
+            viewerService.addViewer({
                 type: 'CodeEditor',
                 resource: 'file:///f2',
                 selections: [],
@@ -86,7 +83,7 @@ describe('Windows (integration)', () => {
             await from(extensionAPI.app.activeWindowChanges)
                 .pipe(
                     filter(isDefined),
-                    switchMap(w => w.activeViewComponentChanges),
+                    switchMap(activeWindow => activeWindow.activeViewComponentChanges),
                     filter(isDefined),
                     take(1)
                 )
@@ -110,25 +107,25 @@ describe('Windows (integration)', () => {
     describe('Window', () => {
         test('Window#visibleViewComponents', async () => {
             const {
-                services: { editor: editorService, model: modelService },
+                services: { viewer: viewerService, model: modelService },
                 extensionAPI,
             } = await integrationTestContext()
 
             modelService.addModel({
-                uri: 'file:///inactive',
-                languageId: 'inactive',
-                text: 'inactive',
+                uri: 'u2',
+                languageId: 'l2',
+                text: 't2',
             })
-            editorService.addEditor({
+            viewerService.addViewer({
                 type: 'CodeEditor',
-                resource: 'file:///inactive',
+                resource: 'u2',
                 selections: [],
-                isActive: false,
+                isActive: true,
             })
             await from(extensionAPI.app.activeWindowChanges)
                 .pipe(
                     filter(isDefined),
-                    switchMap(w => w.activeViewComponentChanges),
+                    switchMap(activeWindow => activeWindow.activeViewComponentChanges),
                     filter(isDefined),
                     take(2)
                 )
@@ -141,7 +138,7 @@ describe('Windows (integration)', () => {
                 },
                 {
                     type: 'CodeEditor' as const,
-                    document: { uri: 'file:///inactive', languageId: 'inactive', text: 'inactive' },
+                    document: { uri: 'u2', languageId: 'l2', text: 't2' },
                 },
             ] as ViewComponent[])
         })
@@ -149,7 +146,7 @@ describe('Windows (integration)', () => {
         describe('Window#activeViewComponent', () => {
             test('ignores inactive components', async () => {
                 const {
-                    services: { editor: editorService, model: modelService },
+                    services: { viewer: viewerService, model: modelService },
                     extensionAPI,
                 } = await integrationTestContext()
 
@@ -158,7 +155,7 @@ describe('Windows (integration)', () => {
                     languageId: 'inactive',
                     text: 'inactive',
                 })
-                editorService.addEditor({
+                viewerService.addViewer({
                     type: 'CodeEditor',
                     resource: 'file:///inactive',
                     selections: [],
@@ -173,37 +170,41 @@ describe('Windows (integration)', () => {
         })
 
         describe('Window#activeViewComponentChanges', () => {
-            test('reflects changes to the active window', async () => {
+            // Skipped, as sourcegraph.app.activeWindow is always defined.
+            test.skip('reflects changes to the active window', async () => {
                 const {
-                    services: { editor: editorService, model: modelService },
+                    services: { viewer: viewerService, model: modelService },
                     extensionAPI,
                 } = await integrationTestContext(undefined, {
                     roots: [],
-                    editors: [],
+                    viewers: [],
                 })
                 modelService.addModel({ uri: 'foo', languageId: 'l1', text: 't1' })
                 modelService.addModel({ uri: 'bar', languageId: 'l2', text: 't2' })
-                editorService.addEditor({
+                viewerService.addViewer({
                     type: 'CodeEditor',
                     resource: 'foo',
                     selections: [],
                     isActive: true,
                 })
-                editorService.removeAllEditors()
-                editorService.addEditor({
+                viewerService.removeAllViewers()
+                viewerService.addViewer({
                     type: 'CodeEditor',
                     resource: 'bar',
                     selections: [],
                     isActive: true,
                 })
-                const values = await from(extensionAPI.app.windows[0].activeViewComponentChanges)
+                const viewers = await from(extensionAPI.app.activeWindowChanges)
                     .pipe(
-                        distinctUntilChanged(),
+                        switchMap(activeWindow => (activeWindow ? activeWindow.activeViewComponentChanges : of(null))),
                         take(4),
                         toArray()
                     )
                     .toPromise()
-                assertToJSON(values.map(c => (c ? c.document.uri : null)), [null, 'foo', null, 'bar'])
+                assertToJSON(
+                    viewers.map(viewer => (viewer && viewer.type === 'CodeEditor' ? viewer.document.uri : null)),
+                    [null, 'foo', null, 'bar']
+                )
             })
         })
 

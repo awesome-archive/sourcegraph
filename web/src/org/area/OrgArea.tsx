@@ -1,5 +1,4 @@
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import { upperFirst } from 'lodash'
 import AlertCircleIcon from 'mdi-react/AlertCircleIcon'
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
 import * as React from 'react'
@@ -7,21 +6,25 @@ import { Route, RouteComponentProps, Switch } from 'react-router'
 import { combineLatest, merge, Observable, of, Subject, Subscription } from 'rxjs'
 import { catchError, distinctUntilChanged, map, mapTo, startWith, switchMap } from 'rxjs/operators'
 import { ExtensionsControllerProps } from '../../../../shared/src/extensions/controller'
-import { gql } from '../../../../shared/src/graphql/graphql'
+import { gql, dataOrThrowErrors } from '../../../../shared/src/graphql/graphql'
 import * as GQL from '../../../../shared/src/graphql/schema'
 import { PlatformContextProps } from '../../../../shared/src/platform/context'
 import { SettingsCascadeProps } from '../../../../shared/src/settings/settings'
-import { createAggregateError, ErrorLike, isErrorLike } from '../../../../shared/src/util/errors'
+import { ErrorLike, isErrorLike, asError } from '../../../../shared/src/util/errors'
 import { queryGraphQL } from '../../backend/graphql'
 import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { HeroPage } from '../../components/HeroPage'
 import { NamespaceProps } from '../../namespaces'
-import { ThemeProps } from '../../theme'
 import { RouteDescriptor } from '../../util/contributions'
 import { OrgAreaHeaderNavItem, OrgHeader } from './OrgHeader'
 import { OrgInvitationPage } from './OrgInvitationPage'
+import { PatternTypeProps } from '../../search'
+import { ThemeProps } from '../../../../shared/src/theme'
+import { ErrorMessage } from '../../components/alerts'
+import * as H from 'history'
+import { TelemetryProps } from '../../../../shared/src/telemetry/telemetryService'
 
-function queryOrganization(args: { name: string }): Observable<GQL.IOrg | null> {
+function queryOrganization(args: { name: string }): Observable<GQL.IOrg> {
     return queryGraphQL(
         gql`
             query Organization($name: String!) {
@@ -50,9 +53,10 @@ function queryOrganization(args: { name: string }): Observable<GQL.IOrg | null> 
         `,
         args
     ).pipe(
-        map(({ data, errors }) => {
-            if (!data || !data.organization) {
-                throw createAggregateError(errors)
+        map(dataOrThrowErrors),
+        map(data => {
+            if (!data.organization) {
+                throw new Error(`Organization not found: ${JSON.stringify(args.name)}`)
             }
             return data.organization
         })
@@ -70,7 +74,9 @@ interface Props
         PlatformContextProps,
         SettingsCascadeProps,
         ThemeProps,
-        ExtensionsControllerProps {
+        TelemetryProps,
+        ExtensionsControllerProps,
+        Omit<PatternTypeProps, 'setPatternType'> {
     orgAreaRoutes: readonly OrgAreaRoute[]
     orgAreaHeaderNavItems: readonly OrgAreaHeaderNavItem[]
 
@@ -78,6 +84,7 @@ interface Props
      * The currently authenticated user.
      */
     authenticatedUser: GQL.IUser | null
+    history: H.History
 }
 
 interface State {
@@ -95,7 +102,9 @@ export interface OrgAreaPageProps
         PlatformContextProps,
         SettingsCascadeProps,
         ThemeProps,
-        NamespaceProps {
+        TelemetryProps,
+        NamespaceProps,
+        Omit<PatternTypeProps, 'setPatternType'> {
     /** The org that is the subject of the page. */
     org: GQL.IOrg
 
@@ -130,8 +139,8 @@ export class OrgArea extends React.Component<Props> {
                     switchMap(([name, forceRefresh]) => {
                         type PartialStateUpdate = Pick<State, 'orgOrError'>
                         return queryOrganization({ name }).pipe(
-                            catchError(error => [error]),
-                            map((c): PartialStateUpdate => ({ orgOrError: c })),
+                            catchError((error): [ErrorLike] => [asError(error)]),
+                            map((orgOrError): PartialStateUpdate => ({ orgOrError })),
 
                             // Don't clear old org data while we reload, to avoid unmounting all components during
                             // loading.
@@ -139,7 +148,10 @@ export class OrgArea extends React.Component<Props> {
                         )
                     })
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), err => console.error(err))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate),
+                    error => console.error(error)
+                )
         )
 
         this.componentUpdates.next(this.props)
@@ -159,7 +171,11 @@ export class OrgArea extends React.Component<Props> {
         }
         if (isErrorLike(this.state.orgOrError)) {
             return (
-                <HeroPage icon={AlertCircleIcon} title="Error" subtitle={upperFirst(this.state.orgOrError.message)} />
+                <HeroPage
+                    icon={AlertCircleIcon}
+                    title="Error"
+                    subtitle={<ErrorMessage error={this.state.orgOrError} history={this.props.history} />}
+                />
             )
         }
 
@@ -172,11 +188,19 @@ export class OrgArea extends React.Component<Props> {
             settingsCascade: this.props.settingsCascade,
             isLightTheme: this.props.isLightTheme,
             namespace: this.state.orgOrError,
+            patternType: this.props.patternType,
+            telemetryService: this.props.telemetryService,
         }
 
         if (this.props.location.pathname === `${this.props.match.url}/invitation`) {
             // The OrgInvitationPage is displayed without the OrgHeader because it is modal-like.
-            return <OrgInvitationPage {...context} onDidRespondToInvitation={this.onDidRespondToInvitation} />
+            return (
+                <OrgInvitationPage
+                    {...context}
+                    onDidRespondToInvitation={this.onDidRespondToInvitation}
+                    history={this.props.history}
+                />
+            )
         }
 
         return (
@@ -215,7 +239,7 @@ export class OrgArea extends React.Component<Props> {
         )
     }
 
-    private onDidRespondToInvitation = () => this.refreshRequests.next()
+    private onDidRespondToInvitation = (): void => this.refreshRequests.next()
 
-    private onDidUpdateOrganization = () => this.refreshRequests.next()
+    private onDidUpdateOrganization = (): void => this.refreshRequests.next()
 }

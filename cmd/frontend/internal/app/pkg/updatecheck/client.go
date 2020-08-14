@@ -11,25 +11,40 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/inconshreveable/log15"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/net/context/ctxhttp"
-	log15 "gopkg.in/inconshreveable/log15.v2"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/pkg/siteid"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/pkg/usagestats"
-	"github.com/sourcegraph/sourcegraph/pkg/conf"
-	"github.com/sourcegraph/sourcegraph/pkg/version"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/pkg/usagestatsdeprecated"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/usagestats"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/metrics"
+	"github.com/sourcegraph/sourcegraph/internal/version"
 )
+
+// metricsRecorder records operational metrics for methods.
+var metricsRecorder = metrics.NewOperationMetrics(prometheus.DefaultRegisterer, "updatecheck_client", metrics.WithLabels("method"))
+
+//
+var updateCheckHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{
+	Name: "update_check_req",
+	Help: "metrics for update_check",
+})
+
+func init() {
+	prometheus.MustRegister(updateCheckHistogram)
+}
 
 // Status of the check for software updates for Sourcegraph.
 type Status struct {
 	Date          time.Time // the time that the last check completed
-	Err           error     // the error that occurred, if any
+	Err           error     // the error that occurred, if any. When present, indicates the instance is offline / unable to contact Sourcegraph.com
 	UpdateVersion string    // the version string of the updated version, if any
 }
 
@@ -66,80 +81,195 @@ var baseURL = &url.URL{
 	Path:   "/.api/updates",
 }
 
-func getSiteActivityJSON() ([]byte, error) {
-	days, weeks, months := 2, 1, 1
-	siteActivity, err := usagestats.GetSiteUsageStatistics(&usagestats.SiteUsageStatisticsOptions{
-		DayPeriods:   &days,
-		WeekPeriods:  &weeks,
-		MonthPeriods: &months,
-	})
+// recordOperation returns a record fn that is called on any given return err. If an error is encountered
+// it will register the err metric. The err is never altered.
+func recordOperation(method string) func(*error) {
+	start := time.Now()
+	return func(err *error) {
+		metricsRecorder.Observe(time.Since(start).Seconds(), 1, err, method)
+	}
+}
+
+func getAndMarshalSiteActivityJSON(ctx context.Context, criticalOnly bool) (_ json.RawMessage, err error) {
+	defer recordOperation("getAndMarshalSiteActivityJSON")(&err)
+	siteActivity, err := usagestats.GetSiteUsageStats(ctx, criticalOnly)
+
 	if err != nil {
 		return nil, err
 	}
+
 	return json.Marshal(siteActivity)
 }
 
+func hasSearchOccurred(ctx context.Context) (_ bool, err error) {
+	defer recordOperation("hasSearchOccurred")(&err)
+	return usagestats.HasSearchOccurred()
+}
+
+func hasFindRefsOccurred(ctx context.Context) (_ bool, err error) {
+	defer recordOperation("hasSearchOccured")(&err)
+	return usagestats.HasFindRefsOccurred()
+}
+
+func getTotalUsersCount(ctx context.Context) (_ int, err error) {
+	defer recordOperation("getTotalUsersCount")(&err)
+	return db.Users.Count(ctx, &db.UsersListOptions{})
+}
+
+func getTotalReposCount(ctx context.Context) (_ int, err error) {
+	defer recordOperation("getTotalReposCount")(&err)
+	return db.Repos.Count(ctx, db.ReposListOptions{})
+}
+
+func getUsersActiveTodayCount(ctx context.Context) (_ int, err error) {
+	defer recordOperation("getUsersActiveTodayCount")(&err)
+	return usagestatsdeprecated.GetUsersActiveTodayCount()
+}
+
+func getInitialSiteAdminEmail(ctx context.Context) (_ string, err error) {
+	defer recordOperation("getInitialSiteAdminEmail")(&err)
+	return db.UserEmails.GetInitialSiteAdminEmail(ctx)
+}
+
+func getAndMarshalCampaignsUsageJSON(ctx context.Context) (_ json.RawMessage, err error) {
+	defer recordOperation("getAndMarshalCampaignsUsageJSON")(&err)
+
+	campaignsUsage, err := usagestats.GetCampaignsUsageStatistics(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(campaignsUsage)
+}
+
+func getAndMarshalAggregatedUsageJSON(ctx context.Context) (_ json.RawMessage, _ json.RawMessage, err error) {
+	defer recordOperation("getAndMarshalAggregatedUsageJSON")(&err)
+
+	codeIntelUsage, searchUsage, err := usagestats.GetAggregatedStats(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	serializedCodeIntelUsage, err := json.Marshal(codeIntelUsage)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	serializedSearchUsage, err := json.Marshal(searchUsage)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return serializedCodeIntelUsage, serializedSearchUsage, nil
+}
+
 func updateURL(ctx context.Context) string {
+	return baseURL.String()
+}
+
+func updateBody(ctx context.Context) (io.Reader, error) {
 	logFunc := log15.Debug
 	if envvar.SourcegraphDotComMode() {
 		logFunc = log15.Warn
 	}
 
-	q := url.Values{}
-	q.Set("version", version.Version())
-	q.Set("site", siteid.Get())
-	q.Set("auth", strings.Join(authProviderTypes(), ","))
-	q.Set("deployType", conf.DeployType())
-	q.Set("hasExtURL", strconv.FormatBool(conf.UsingExternalURL()))
-	q.Set("signup", strconv.FormatBool(conf.IsBuiltinSignupAllowed()))
+	r := &pingRequest{
+		ClientSiteID:        siteid.Get(),
+		DeployType:          conf.DeployType(),
+		ClientVersionString: version.Version(),
+		LicenseKey:          conf.Get().LicenseKey,
+		CodeIntelUsage:      []byte("{}"),
+		SearchUsage:         []byte("{}"),
+		CampaignsUsage:      []byte("{}"),
+	}
 
-	count, err := usagestats.GetUsersActiveTodayCount()
+	totalUsers, err := getTotalUsersCount(ctx)
 	if err != nil {
-		logFunc("usagestats.GetUsersActiveTodayCount failed", "error", err)
+		logFunc("telemetry: db.Users.Count failed", "error", err)
 	}
-	q.Set("u", strconv.Itoa(count))
-	totalUsers, err := db.Users.Count(ctx, &db.UsersListOptions{})
+	r.TotalUsers = int32(totalUsers)
+	r.InitialAdminEmail, err = getInitialSiteAdminEmail(ctx)
 	if err != nil {
-		logFunc("db.Users.Count failed", "error", err)
+		logFunc("telemetry: db.UserEmails.GetInitialSiteAdminEmail failed", "error", err)
 	}
-	q.Set("totalUsers", strconv.Itoa(totalUsers))
-	totalRepos, err := db.Repos.Count(ctx, db.ReposListOptions{Enabled: true, Disabled: true})
-	hasRepos := totalRepos > 0
-	if err != nil {
-		logFunc("db.Repos.Count failed", "error", err)
-	}
-	q.Set("repos", strconv.FormatBool(hasRepos))
-	searchOccurred, err := usagestats.HasSearchOccurred()
-	if err != nil {
-		logFunc("usagestats.HasSearchOccurred failed", "error", err)
-	}
-	// Searches only count if repos have been added.
-	q.Set("searched", strconv.FormatBool(hasRepos && searchOccurred))
-	findRefsOccurred, err := usagestats.HasFindRefsOccurred()
-	if err != nil {
-		logFunc("usagestats.HasFindRefsOccurred failed", "error", err)
-	}
-	q.Set("refs", strconv.FormatBool(findRefsOccurred))
-	if act, err := getSiteActivityJSON(); err != nil {
-		logFunc("getSiteActivityJSON failed", "error", err)
+
+	if !conf.Get().DisableNonCriticalTelemetry {
+		// TODO(Dan): migrate this to the new usagestats package.
+		//
+		// For the time being, instances will report daily active users through the legacy package via this argument,
+		// as well as using the new package through the `act` argument below. This will allow comparison during the
+		// transition.
+		count, err := getUsersActiveTodayCount(ctx)
+		if err != nil {
+			logFunc("telemetry: updatecheck.getUsersActiveToday failed", "error", err)
+		}
+		r.UniqueUsers = int32(count)
+		totalRepos, err := getTotalReposCount(ctx)
+		if err != nil {
+			logFunc("telemetry: updatecheck.getTotalReposCount failed", "error", err)
+		}
+		r.HasRepos = totalRepos > 0
+
+		r.EverSearched, err = hasSearchOccurred(ctx)
+		if err != nil {
+			logFunc("telemetry: updatecheck.hasSearchOccurred failed", "error", err)
+		}
+		r.EverFindRefs, err = hasFindRefsOccurred(ctx)
+		if err != nil {
+			logFunc("telemetry: updatecheck.hasFindRefsOccurred failed", "error", err)
+		}
+		r.CampaignsUsage, err = getAndMarshalCampaignsUsageJSON(ctx)
+		if err != nil {
+			logFunc("telemetry: updatecheck.getAndMarshalCampaignsUsageJSON failed", "error", err)
+		}
+		r.ExternalServices, err = externalServiceKinds(ctx)
+		if err != nil {
+			logFunc("telemetry: externalServicesKinds failed", "error", err)
+		}
+
+		r.HasExtURL = conf.UsingExternalURL()
+		r.BuiltinSignupAllowed = conf.IsBuiltinSignupAllowed()
+		r.AuthProviders = authProviderTypes()
+
+		// The following methods are the most expensive to calculate, so we do them in
+		// parallel.
+
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.Activity, err = getAndMarshalSiteActivityJSON(ctx, false)
+			if err != nil {
+				logFunc("telemetry: updatecheck.getAndMarshalSiteActivityJSON failed", "error", err)
+			}
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.CodeIntelUsage, r.SearchUsage, err = getAndMarshalAggregatedUsageJSON(ctx)
+			if err != nil {
+				logFunc("telemetry: updatecheck.getAndMarshalAggregatedUsageJSON failed", "error", err)
+			}
+		}()
+		wg.Wait()
 	} else {
-		q.Set("act", string(act))
+		r.Activity, err = getAndMarshalSiteActivityJSON(ctx, true)
+		if err != nil {
+			logFunc("telemetry: updatecheck.getAndMarshalSiteActivityJSON failed", "error", err)
+		}
 	}
-	initAdminEmail, err := db.UserEmails.GetInitialSiteAdminEmail(ctx)
+
+	contents, err := json.Marshal(r)
 	if err != nil {
-		logFunc("db.UserEmails.GetInitialSiteAdminEmail failed", "error", err)
+		return nil, err
 	}
-	q.Set("initAdmin", initAdminEmail)
-	svcs, err := externalServiceKinds(ctx)
-	if err != nil {
-		logFunc("externalServicesKinds failed", "error", err)
-	}
-	q.Set("extsvcs", strings.Join(svcs, ","))
-	return baseURL.ResolveReference(&url.URL{RawQuery: q.Encode()}).String()
+
+	return bytes.NewReader(contents), nil
 }
 
 func authProviderTypes() []string {
-	ps := conf.Get().Critical.AuthProviders
+	ps := conf.Get().AuthProviders
 	types := make([]string, len(ps))
 	for i, p := range ps {
 		types[i] = conf.AuthProviderType(p)
@@ -147,7 +277,9 @@ func authProviderTypes() []string {
 	return types
 }
 
-func externalServiceKinds(ctx context.Context) ([]string, error) {
+func externalServiceKinds(ctx context.Context) (_ []string, err error) {
+	defer recordOperation("externalServiceKinds")(&err)
+
 	services, err := db.ExternalServices.List(ctx, db.ExternalServicesListOptions{})
 	if err != nil {
 		return nil, err
@@ -163,7 +295,11 @@ func externalServiceKinds(ctx context.Context) ([]string, error) {
 // (returned by Last and IsPending).
 func check(ctx context.Context) (*Status, error) {
 	doCheck := func() (updateVersion string, err error) {
-		resp, err := ctxhttp.Get(ctx, nil, updateURL(ctx))
+		body, err := updateBody(ctx)
+		if err != nil {
+			return "", err
+		}
+		resp, err := ctxhttp.Post(ctx, nil, updateURL(ctx), "application/json", body)
 		if err != nil {
 			return "", err
 		}
@@ -228,7 +364,7 @@ func Start() {
 	ctx := context.Background()
 	const delay = 30 * time.Minute
 	for {
-		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 300*time.Second)
 		_, _ = check(ctx) // updates global state on its own, can safely ignore return value
 		cancel()
 

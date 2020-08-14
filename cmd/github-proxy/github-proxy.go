@@ -17,14 +17,13 @@ import (
 	"time"
 
 	"github.com/gorilla/handlers"
+	"github.com/inconshreveable/log15"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	log15 "gopkg.in/inconshreveable/log15.v2"
 
-	"github.com/sourcegraph/sourcegraph/pkg/conf"
-	"github.com/sourcegraph/sourcegraph/pkg/debugserver"
-	"github.com/sourcegraph/sourcegraph/pkg/env"
-	"github.com/sourcegraph/sourcegraph/pkg/tracer"
+	"github.com/sourcegraph/sourcegraph/internal/debugserver"
+	"github.com/sourcegraph/sourcegraph/internal/env"
+	"github.com/sourcegraph/sourcegraph/internal/tracer"
 )
 
 var logRequests, _ = strconv.ParseBool(env.Get("LOG_REQUESTS", "", "log HTTP requests"))
@@ -35,10 +34,8 @@ const port = "3180"
 var requestMu sync.Mutex
 
 var rateLimitRemainingGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-	Namespace: "src",
-	Subsystem: "github",
-	Name:      "rate_limit_remaining",
-	Help:      "Number of calls to GitHub's API remaining before hitting the rate limit.",
+	Name: "src_github_rate_limit_remaining",
+	Help: "Number of calls to GitHub's API remaining before hitting the rate limit.",
 }, []string{"resource"})
 
 func init() {
@@ -74,26 +71,11 @@ func main() {
 
 	go debugserver.Start()
 
-	var (
-		authenticateRequestMu sync.RWMutex
-		authenticateRequest   func(query url.Values, header http.Header)
-	)
-	conf.Watch(func() {
-		cfg := conf.Get()
-		if clientID, clientSecret := cfg.GithubClientID, cfg.GithubClientSecret; clientID != "" && clientSecret != "" {
-			authenticateRequestMu.Lock()
-			authenticateRequest = func(query url.Values, header http.Header) {
-				query.Set("client_id", clientID)
-				query.Set("client_secret", clientSecret)
-			}
-			authenticateRequestMu.Unlock()
-		}
-	})
-
 	// Use a custom client/transport because GitHub closes keep-alive
 	// connections after 60s. In order to avoid running into EOF errors, we use
 	// a IdleConnTimeout of 30s, so connections are only kept around for <30s
 	client := &http.Client{Transport: &http.Transport{
+		Proxy:           http.ProxyFromEnvironment,
 		IdleConnTimeout: 30 * time.Second,
 	}}
 
@@ -104,14 +86,6 @@ func main() {
 			if _, found := hopHeaders[k]; !found {
 				h2[k] = v
 			}
-		}
-
-		// Authenticate for higher rate limits.
-		authenticateRequestMu.RLock()
-		authRequest := authenticateRequest
-		authenticateRequestMu.RUnlock()
-		if authRequest != nil {
-			authRequest(q2, h2)
 		}
 
 		req2 := &http.Request{
@@ -153,12 +127,12 @@ func main() {
 		}
 		w.WriteHeader(resp.StatusCode)
 		if resp.StatusCode < 400 || !logRequests {
-			io.Copy(w, resp.Body)
+			_, _ = io.Copy(w, resp.Body)
 			return
 		}
 		b, err := ioutil.ReadAll(resp.Body)
 		log15.Warn("proxy error", "status", resp.StatusCode, "body", string(b), "bodyErr", err)
-		io.Copy(w, bytes.NewReader(b))
+		_, _ = io.Copy(w, bytes.NewReader(b))
 	})
 	if logRequests {
 		h = handlers.LoggingHandler(os.Stdout, h)
@@ -178,40 +152,32 @@ func main() {
 func instrumentHandler(r prometheus.Registerer, h http.Handler) http.Handler {
 	var (
 		inFlightGauge = prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: "src",
-			Subsystem: "githubproxy",
-			Name:      "in_flight_requests",
-			Help:      "A gauge of requests currently being served by github-proxy.",
+			Name: "src_githubproxy_in_flight_requests",
+			Help: "A gauge of requests currently being served by github-proxy.",
 		})
 
 		counter = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Namespace: "src",
-				Subsystem: "githubproxy",
-				Name:      "requests_total",
-				Help:      "A counter for requests to github-proxy.",
+				Name: "src_githubproxy_requests_total",
+				Help: "A counter for requests to github-proxy.",
 			},
 			[]string{"code", "method"},
 		)
 
 		duration = prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: "src",
-				Subsystem: "githubproxy",
-				Name:      "request_duration_seconds",
-				Help:      "A histogram of latencies for requests.",
-				Buckets:   []float64{.25, .5, 1, 2.5, 5, 10},
+				Name:    "src_githubproxy_request_duration_seconds",
+				Help:    "A histogram of latencies for requests.",
+				Buckets: []float64{.25, .5, 1, 2.5, 5, 10},
 			},
 			[]string{"method"},
 		)
 
 		responseSize = prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Namespace: "src",
-				Subsystem: "githubproxy",
-				Name:      "response_size_bytes",
-				Help:      "A histogram of response sizes for requests.",
-				Buckets:   []float64{200, 500, 900, 1500},
+				Name:    "src_githubproxy_response_size_bytes",
+				Help:    "A histogram of response sizes for requests.",
+				Buckets: []float64{200, 500, 900, 1500},
 			},
 			[]string{},
 		)

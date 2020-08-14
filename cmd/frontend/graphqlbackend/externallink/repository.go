@@ -7,18 +7,19 @@ import (
 	"net/url"
 	"strings"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/inconshreveable/log15"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/errcode"
-	"github.com/sourcegraph/sourcegraph/pkg/repoupdater"
-	"github.com/sourcegraph/sourcegraph/pkg/repoupdater/protocol"
-	"github.com/sourcegraph/sourcegraph/pkg/vcs/git"
-	log15 "gopkg.in/inconshreveable/log15.v2"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/errcode"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/repoupdater"
+	"github.com/sourcegraph/sourcegraph/internal/repoupdater/protocol"
+	"github.com/sourcegraph/sourcegraph/internal/trace/ot"
+	"github.com/sourcegraph/sourcegraph/internal/vcs/git"
 )
 
 // Repository returns the external links for a repository.
@@ -30,7 +31,7 @@ func Repository(ctx context.Context, repo *types.Repo) (links []*Resolver, err e
 	if phabRepo != nil {
 		links = append(links, &Resolver{
 			url:         strings.TrimSuffix(phabRepo.URL, "/") + "/diffusion/" + phabRepo.Callsign,
-			serviceType: "phabricator",
+			serviceType: extsvc.TypePhabricator,
 		})
 	}
 	if link != nil && link.Root != "" {
@@ -55,7 +56,7 @@ func FileOrDir(ctx context.Context, repo *types.Repo, rev, path string, isDir bo
 		if err == nil && string(branchName) != "" {
 			links = append(links, &Resolver{
 				url:         fmt.Sprintf("%s/source/%s/browse/%s/%s;%s", strings.TrimSuffix(phabRepo.URL, "/"), phabRepo.Callsign, url.PathEscape(string(branchName)), path, rev),
-				serviceType: "phabricator",
+				serviceType: extsvc.TypePhabricator,
 			})
 		}
 	}
@@ -84,7 +85,7 @@ func Commit(ctx context.Context, repo *types.Repo, commitID api.CommitID) (links
 	if phabRepo != nil {
 		links = append(links, &Resolver{
 			url:         fmt.Sprintf("%s/r%s%s", strings.TrimSuffix(phabRepo.URL, "/"), phabRepo.Callsign, commitStr),
-			serviceType: "phabricator",
+			serviceType: extsvc.TypePhabricator,
 		})
 	}
 
@@ -104,7 +105,7 @@ func Commit(ctx context.Context, repo *types.Repo, commitID api.CommitID) (links
 // It logs errors to the trace but does not return errors, because external links are not worth
 // failing any request for.
 func linksForRepository(ctx context.Context, repo *types.Repo) (phabRepo *types.PhabricatorRepo, link *protocol.RepoLinks, serviceType string) {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "externallink.linksForRepository")
+	span, ctx := ot.StartSpanFromContext(ctx, "externallink.linksForRepository")
 	defer span.Finish()
 	span.SetTag("Repo", repo.Name)
 	span.SetTag("ExternalRepo", repo.ExternalRepo)
@@ -135,10 +136,8 @@ func linksForRepository(ctx context.Context, repo *types.Repo) (phabRepo *types.
 }
 
 var linksForRepositoryFailed = prometheus.NewCounter(prometheus.CounterOpts{
-	Namespace: "src",
-	Subsystem: "graphql",
-	Name:      "links_for_repository_failed_total",
-	Help:      "The total number of times the GraphQL field LinksForRepository failed.",
+	Name: "src_graphql_links_for_repository_failed_total",
+	Help: "The total number of times the GraphQL field LinksForRepository failed.",
 })
 
 func init() {

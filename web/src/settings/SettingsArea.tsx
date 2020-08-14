@@ -1,4 +1,3 @@
-import { upperFirst } from 'lodash'
 import AlertCircleIcon from 'mdi-react/AlertCircleIcon'
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
 import * as React from 'react'
@@ -14,15 +13,18 @@ import { gqlToCascade, SettingsCascadeProps } from '../../../shared/src/settings
 import { asError, createAggregateError, ErrorLike, isErrorLike } from '../../../shared/src/util/errors'
 import { queryGraphQL } from '../backend/graphql'
 import { HeroPage } from '../components/HeroPage'
-import { ThemeProps } from '../theme'
+import { ThemeProps } from '../../../shared/src/theme'
 import { eventLogger } from '../tracking/eventLogger'
 import { mergeSettingsSchemas } from './configuration'
 import { SettingsPage } from './SettingsPage'
+import { ErrorMessage } from '../components/alerts'
+import * as H from 'history'
+import { TelemetryProps } from '../../../shared/src/telemetry/telemetryService'
 
 const NotFoundPage: React.FunctionComponent = () => <HeroPage icon={MapSearchIcon} title="404: Not Found" />
 
 /** Props shared by SettingsArea and its sub-pages. */
-interface SettingsAreaPageCommonProps extends PlatformContextProps, SettingsCascadeProps, ThemeProps {
+interface SettingsAreaPageCommonProps extends PlatformContextProps, SettingsCascadeProps, ThemeProps, TelemetryProps {
     /** The subject whose settings to edit. */
     subject: Pick<GQL.SettingsSubject, '__typename' | 'id'>
 
@@ -49,9 +51,10 @@ export interface SettingsAreaPageProps extends SettingsAreaPageCommonProps {
 interface Props extends SettingsAreaPageCommonProps, RouteComponentProps<{}> {
     className?: string
     extraHeader?: JSX.Element
+    history: H.History
 }
 
-const LOADING: 'loading' = 'loading'
+const LOADING = 'loading' as const
 
 interface State {
     /**
@@ -90,11 +93,14 @@ export class SettingsArea extends React.Component<Props, State> {
                                 )
                             ),
                             catchError(error => [asError(error)]),
-                            map(c => ({ dataOrError: c }))
+                            map(dataOrError => ({ dataOrError }))
                         )
                     )
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), err => console.error(err))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate),
+                    error => console.error(error)
+                )
         )
 
         this.componentUpdates.next(this.props)
@@ -114,7 +120,11 @@ export class SettingsArea extends React.Component<Props, State> {
         }
         if (isErrorLike(this.state.dataOrError)) {
             return (
-                <HeroPage icon={AlertCircleIcon} title="Error" subtitle={upperFirst(this.state.dataOrError.message)} />
+                <HeroPage
+                    icon={AlertCircleIcon}
+                    title="Error"
+                    subtitle={<ErrorMessage error={this.state.dataOrError} history={this.props.history} />}
+                />
             )
         }
 
@@ -145,6 +155,7 @@ export class SettingsArea extends React.Component<Props, State> {
             isLightTheme: this.props.isLightTheme,
             platformContext: this.props.platformContext,
             settingsCascade: this.props.settingsCascade,
+            telemetryService: this.props.telemetryService,
         }
 
         return (
@@ -166,7 +177,7 @@ export class SettingsArea extends React.Component<Props, State> {
         )
     }
 
-    private onUpdate = () => this.refreshRequests.next()
+    private onUpdate = (): void => this.refreshRequests.next()
 
     private getMergedSettingsJSONSchema(cascade: Pick<GQL.ISettingsCascade, 'subjects'>): Observable<{ $id: string }> {
         return queryConfiguredRegistryExtensions(

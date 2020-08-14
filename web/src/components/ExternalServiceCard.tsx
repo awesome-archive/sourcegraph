@@ -1,4 +1,4 @@
-import H from 'history'
+import * as H from 'history'
 import ChevronRightIcon from 'mdi-react/ChevronRightIcon'
 import React from 'react'
 import { Link } from 'react-router-dom'
@@ -18,7 +18,7 @@ interface ExternalServiceCardProps {
     /**
      * A short description that will appear in the external service "button" under the title
      */
-    shortDescription: string
+    shortDescription?: string
 
     kind: GQL.ExternalServiceKind
 
@@ -38,8 +38,8 @@ export const ExternalServiceCard: React.FunctionComponent<ExternalServiceCardPro
         <div className={`p-3 d-flex align-items-start border ${className}`}>
             <Icon className="icon-inline h3 mb-0 mr-3" />
             <div className="flex-1">
-                <h3 className="mb-0">{title}</h3>
-                <p className="mb-0 text-muted">{shortDescription}</p>
+                <h3 className={shortDescription ? 'mb-0' : 'mt-1 mb-0'}>{title}</h3>
+                {shortDescription && <p className="mb-0 text-muted">{shortDescription}</p>}
             </div>
             {to && <ChevronRightIcon className="align-self-center" />}
         </div>
@@ -48,7 +48,7 @@ export const ExternalServiceCard: React.FunctionComponent<ExternalServiceCardPro
         <Link
             className="d-block text-left text-body text-decoration-none"
             to={to}
-            data-e2e-external-service-card-link={kind}
+            data-test-external-service-card-link={kind}
         >
             {children}
         </Link>

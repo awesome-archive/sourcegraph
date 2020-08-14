@@ -15,7 +15,7 @@ import { eventLogger } from '../tracking/eventLogger'
 function fetchRepositories(args: { first?: number; query?: string }): Observable<GQL.IRepositoryConnection> {
     return queryGraphQL(
         gql`
-            query Repositories($first: Int, $query: String) {
+            query RepositoriesForPopover($first: Int, $query: String) {
                 repositories(first: $first, query: $query) {
                     nodes {
                         id
@@ -99,11 +99,12 @@ export class RepositoriesPopover extends React.PureComponent<Props> {
                     history={this.props.history}
                     location={this.props.location}
                     noSummaryIfAllNodesVisible={true}
-                    shouldUpdateURLQuery={false}
+                    useURLQuery={false}
                 />
             </div>
         )
     }
 
-    private queryRepositories = (args: FilteredConnectionQueryArgs) => fetchRepositories({ ...args })
+    private queryRepositories = (args: FilteredConnectionQueryArgs): Observable<GQL.IRepositoryConnection> =>
+        fetchRepositories({ ...args })
 }

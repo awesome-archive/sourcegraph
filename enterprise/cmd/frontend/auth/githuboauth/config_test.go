@@ -1,20 +1,18 @@
 package githuboauth
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/sergi/go-diff/diffmatchpatch"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth/providers"
+	"github.com/google/go-cmp/cmp"
 	"github.com/sourcegraph/sourcegraph/enterprise/cmd/frontend/auth/oauth"
-	"github.com/sourcegraph/sourcegraph/pkg/conf"
-	githubcodehost "github.com/sourcegraph/sourcegraph/pkg/extsvc/github"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/schema"
 	"golang.org/x/oauth2"
 )
 
-func Test_parseConfig(t *testing.T) {
+func TestParseConfig(t *testing.T) {
 	spew.Config.DisablePointerAddresses = true
 	spew.Config.SortKeys = true
 	spew.Config.SpewKeys = true
@@ -25,97 +23,110 @@ func Test_parseConfig(t *testing.T) {
 	tests := []struct {
 		name          string
 		args          args
-		wantProviders map[schema.GitHubAuthProvider]providers.Provider
+		wantProviders []Provider
 		wantProblems  []string
 	}{
 		{
 			name:          "No configs",
 			args:          args{cfg: &conf.Unified{}},
-			wantProviders: map[schema.GitHubAuthProvider]providers.Provider{},
+			wantProviders: []Provider(nil),
 		},
 		{
 			name: "1 GitHub.com config",
-			args: args{cfg: &conf.Unified{Critical: schema.CriticalConfiguration{
+			args: args{cfg: &conf.Unified{SiteConfiguration: schema.SiteConfiguration{
 				AuthProviders: []schema.AuthProviders{{
 					Github: &schema.GitHubAuthProvider{
 						ClientID:     "my-client-id",
 						ClientSecret: "my-client-secret",
 						DisplayName:  "GitHub",
-						Type:         "github",
+						Type:         extsvc.TypeGitHub,
 						Url:          "https://github.com",
+						AllowOrgs:    []string{"myorg"},
 					},
 				}},
 			}}},
-			wantProviders: map[schema.GitHubAuthProvider]providers.Provider{
+			wantProviders: []Provider{
 				{
-					ClientID:     "my-client-id",
-					ClientSecret: "my-client-secret",
-					DisplayName:  "GitHub",
-					Type:         "github",
-					Url:          "https://github.com",
-				}: provider("https://github.com/", oauth2.Config{
-					ClientID:     "my-client-id",
-					ClientSecret: "my-client-secret",
-					Endpoint: oauth2.Endpoint{
-						AuthURL:  "https://github.com/login/oauth/authorize",
-						TokenURL: "https://github.com/login/oauth/access_token",
+					GitHubAuthProvider: &schema.GitHubAuthProvider{
+						ClientID:     "my-client-id",
+						ClientSecret: "my-client-secret",
+						DisplayName:  "GitHub",
+						Type:         extsvc.TypeGitHub,
+						Url:          "https://github.com",
+						AllowOrgs:    []string{"myorg"},
 					},
-					Scopes: []string{"repo", "user:email"},
-				}),
+					Provider: provider("https://github.com/", oauth2.Config{
+						ClientID:     "my-client-id",
+						ClientSecret: "my-client-secret",
+						Endpoint: oauth2.Endpoint{
+							AuthURL:  "https://github.com/login/oauth/authorize",
+							TokenURL: "https://github.com/login/oauth/access_token",
+						},
+						Scopes: []string{"user:email", "repo", "read:org"},
+					}),
+				},
 			},
 		},
 		{
 			name: "2 GitHub configs",
-			args: args{cfg: &conf.Unified{Critical: schema.CriticalConfiguration{
+			args: args{cfg: &conf.Unified{SiteConfiguration: schema.SiteConfiguration{
 				AuthProviders: []schema.AuthProviders{{
 					Github: &schema.GitHubAuthProvider{
 						ClientID:     "my-client-id",
 						ClientSecret: "my-client-secret",
 						DisplayName:  "GitHub",
-						Type:         "github",
+						Type:         extsvc.TypeGitHub,
 						Url:          "https://github.com",
+						AllowOrgs:    []string{"myorg"},
 					},
 				}, {
 					Github: &schema.GitHubAuthProvider{
 						ClientID:     "my-client-id-2",
 						ClientSecret: "my-client-secret-2",
 						DisplayName:  "GitHub Enterprise",
-						Type:         "github",
+						Type:         extsvc.TypeGitHub,
 						Url:          "https://mycompany.com",
 					},
 				}},
 			}}},
-			wantProviders: map[schema.GitHubAuthProvider]providers.Provider{
+			wantProviders: []Provider{
 				{
-					ClientID:     "my-client-id",
-					ClientSecret: "my-client-secret",
-					DisplayName:  "GitHub",
-					Type:         "github",
-					Url:          "https://github.com",
-				}: provider("https://github.com/", oauth2.Config{
-					ClientID:     "my-client-id",
-					ClientSecret: "my-client-secret",
-					Endpoint: oauth2.Endpoint{
-						AuthURL:  "https://github.com/login/oauth/authorize",
-						TokenURL: "https://github.com/login/oauth/access_token",
+					GitHubAuthProvider: &schema.GitHubAuthProvider{
+						ClientID:     "my-client-id",
+						ClientSecret: "my-client-secret",
+						DisplayName:  "GitHub",
+						Type:         extsvc.TypeGitHub,
+						Url:          "https://github.com",
+						AllowOrgs:    []string{"myorg"},
 					},
-					Scopes: []string{"repo", "user:email"},
-				}),
+					Provider: provider("https://github.com/", oauth2.Config{
+						ClientID:     "my-client-id",
+						ClientSecret: "my-client-secret",
+						Endpoint: oauth2.Endpoint{
+							AuthURL:  "https://github.com/login/oauth/authorize",
+							TokenURL: "https://github.com/login/oauth/access_token",
+						},
+						Scopes: []string{"user:email", "repo", "read:org"},
+					}),
+				},
 				{
-					ClientID:     "my-client-id-2",
-					ClientSecret: "my-client-secret-2",
-					DisplayName:  "GitHub Enterprise",
-					Type:         "github",
-					Url:          "https://mycompany.com",
-				}: provider("https://mycompany.com/", oauth2.Config{
-					ClientID:     "my-client-id-2",
-					ClientSecret: "my-client-secret-2",
-					Endpoint: oauth2.Endpoint{
-						AuthURL:  "https://mycompany.com/login/oauth/authorize",
-						TokenURL: "https://mycompany.com/login/oauth/access_token",
+					GitHubAuthProvider: &schema.GitHubAuthProvider{
+						ClientID:     "my-client-id-2",
+						ClientSecret: "my-client-secret-2",
+						DisplayName:  "GitHub Enterprise",
+						Type:         extsvc.TypeGitHub,
+						Url:          "https://mycompany.com",
 					},
-					Scopes: []string{"repo", "user:email"},
-				}),
+					Provider: provider("https://mycompany.com/", oauth2.Config{
+						ClientID:     "my-client-id-2",
+						ClientSecret: "my-client-secret-2",
+						Endpoint: oauth2.Endpoint{
+							AuthURL:  "https://mycompany.com/login/oauth/authorize",
+							TokenURL: "https://mycompany.com/login/oauth/access_token",
+						},
+						Scopes: []string{"user:email", "repo"},
+					}),
+				},
 			},
 		},
 	}
@@ -123,26 +134,21 @@ func Test_parseConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gotProviders, gotProblems := parseConfig(tt.args.cfg)
 			for _, p := range gotProviders {
-				if p, ok := p.(*oauth.Provider); ok {
+				if p, ok := p.Provider.(*oauth.Provider); ok {
 					p.Login, p.Callback = nil, nil
 					p.ProviderOp.Login, p.ProviderOp.Callback = nil, nil
 				}
 			}
-			for k, p := range tt.wantProviders {
-				k := k
-				if q, ok := p.(*oauth.Provider); ok {
-					q.SourceConfig = schema.AuthProviders{Github: &k}
+			for _, p := range tt.wantProviders {
+				if q, ok := p.Provider.(*oauth.Provider); ok {
+					q.SourceConfig = schema.AuthProviders{Github: p.GitHubAuthProvider}
 				}
 			}
-			if !reflect.DeepEqual(gotProviders, tt.wantProviders) {
-				dmp := diffmatchpatch.New()
-
-				t.Errorf("parseConfig() gotProviders != tt.wantProviders, diff:\n%s",
-					dmp.DiffPrettyText(dmp.DiffMain(spew.Sdump(tt.wantProviders), spew.Sdump(gotProviders), false)),
-				)
+			if diff := cmp.Diff(tt.wantProviders, gotProviders); diff != "" {
+				t.Errorf("providers: %s", diff)
 			}
-			if !reflect.DeepEqual(gotProblems, tt.wantProblems) {
-				t.Errorf("parseConfig() gotProblems = %v, want %v", gotProblems, tt.wantProblems)
+			if diff := cmp.Diff(tt.wantProblems, gotProblems.Messages()); diff != "" {
+				t.Errorf("problems: %s", diff)
 			}
 		})
 	}
@@ -154,7 +160,7 @@ func provider(serviceID string, oauth2Config oauth2.Config) *oauth.Provider {
 		OAuth2Config: oauth2Config,
 		StateConfig:  getStateConfig(),
 		ServiceID:    serviceID,
-		ServiceType:  githubcodehost.ServiceType,
+		ServiceType:  extsvc.TypeGitHub,
 	}
 	return &oauth.Provider{ProviderOp: op}
 }

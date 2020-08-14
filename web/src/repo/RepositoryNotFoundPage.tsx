@@ -57,14 +57,17 @@ export class RepositoryNotFoundPage extends React.PureComponent<Props, State> {
                         return merge<PartialStateUpdate>(
                             of({ showAdd: true, canAddOrError: undefined }),
                             checkMirrorRepositoryConnection({ name: repo }).pipe(
-                                map(c => c.error === null),
+                                map(result => result.error === null),
                                 catchError(error => [asError(error)]),
-                                map(c => ({ canAddOrError: c } as PartialStateUpdate))
+                                map((canAddOrError): PartialStateUpdate => ({ showAdd: true, canAddOrError }))
                             )
                         )
                     })
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), error => console.error(error))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate),
+                    error => console.error(error)
+                )
         )
 
         this.componentUpdates.next(this.props)

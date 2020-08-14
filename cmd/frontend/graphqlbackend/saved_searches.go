@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 
-	graphql "github.com/graph-gophers/graphql-go"
+	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
 	"github.com/sourcegraph/sourcegraph/cmd/query-runner/queryrunnerapi"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/lazyregexp"
 )
 
 type savedSearchResolver struct {
@@ -79,21 +80,24 @@ func (r savedSearchResolver) Description() string { return r.s.Description }
 
 func (r savedSearchResolver) Query() string { return r.s.Query }
 
-func (r savedSearchResolver) UserID() *graphql.ID {
-	if r.s.UserID == nil {
-		return nil
+func (r savedSearchResolver) Namespace(ctx context.Context) (*NamespaceResolver, error) {
+	if r.s.OrgID != nil {
+		n, err := NamespaceByID(ctx, MarshalOrgID(*r.s.OrgID))
+		if err != nil {
+			return nil, err
+		}
+		return &NamespaceResolver{n}, nil
 	}
-	userID := marshalUserID(*r.s.UserID)
-	return &userID
+	if r.s.UserID != nil {
+		n, err := NamespaceByID(ctx, MarshalUserID(*r.s.UserID))
+		if err != nil {
+			return nil, err
+		}
+		return &NamespaceResolver{n}, nil
+	}
+	return nil, nil
 }
 
-func (r savedSearchResolver) OrgID() *graphql.ID {
-	if r.s.OrgID == nil {
-		return nil
-	}
-	orgID := marshalOrgID(*r.s.OrgID)
-	return &orgID
-}
 func (r savedSearchResolver) SlackWebhookURL() *string { return r.s.SlackWebhookURL }
 
 func toSavedSearchResolver(entry types.SavedSearch) *savedSearchResolver {
@@ -148,8 +152,7 @@ func (r *schemaResolver) CreateSavedSearch(ctx context.Context, args *struct {
 	OrgID       *graphql.ID
 	UserID      *graphql.ID
 }) (*savedSearchResolver, error) {
-	var userID *int32
-	var orgID *int32
+	var userID, orgID *int32
 	// 🚨 SECURITY: Make sure the current user has permission to create a saved search for the specified user or org.
 	if args.UserID != nil {
 		u, err := unmarshalSavedSearchID(*args.UserID)
@@ -171,6 +174,10 @@ func (r *schemaResolver) CreateSavedSearch(ctx context.Context, args *struct {
 		}
 	} else {
 		return nil, errors.New("failed to create saved search: no Org ID or User ID associated with saved search")
+	}
+
+	if !queryHasPatternType(args.Query) {
+		return nil, errMissingPatternType
 	}
 
 	ss, err := db.SavedSearches.Create(ctx, &types.SavedSearch{
@@ -226,6 +233,10 @@ func (r *schemaResolver) UpdateSavedSearch(ctx context.Context, args *struct {
 		return nil, err
 	}
 
+	if !queryHasPatternType(args.Query) {
+		return nil, errMissingPatternType
+	}
+
 	ss, err := db.SavedSearches.Update(ctx, &types.SavedSearch{
 		ID:          id,
 		Description: args.Description,
@@ -271,3 +282,11 @@ func (r *schemaResolver) DeleteSavedSearch(ctx context.Context, args *struct {
 	}
 	return &EmptyResponse{}, nil
 }
+
+var patternTypeRegexp = lazyregexp.New(`(?i)\bpatternType:(literal|regexp)\b`)
+
+func queryHasPatternType(query string) bool {
+	return patternTypeRegexp.Match([]byte(query))
+}
+
+var errMissingPatternType = errors.New("a `patternType:` filter is required in the query for all saved searches. `patternType` can be \"literal\" or \"regexp\"")

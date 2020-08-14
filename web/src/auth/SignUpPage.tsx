@@ -17,7 +17,7 @@ interface SignUpPageProps {
 
 export class SignUpPage extends React.Component<SignUpPageProps> {
     public componentDidMount(): void {
-        eventLogger.logViewEvent('SignUp', {}, false)
+        eventLogger.logViewEvent('SignUp', false)
     }
 
     public render(): JSX.Element | null {
@@ -38,13 +38,15 @@ export class SignUpPage extends React.Component<SignUpPageProps> {
                     title={
                         window.context.sourcegraphDotComMode ? 'Sign up for Sourcegraph.com' : 'Sign up for Sourcegraph'
                     }
-                    cta={
-                        <div>
-                            <Link className="signin-signup-form__mode" to={`/sign-in${this.props.location.search}`}>
-                                Already have an account? Sign in.
-                            </Link>
+                    body={
+                        <>
+                            <p>
+                                <Link to={`/sign-in${this.props.location.search}`}>
+                                    Already have an account? Sign in.
+                                </Link>
+                            </p>
                             <SignUpForm {...this.props} doSignUp={this.doSignUp} />
-                        </div>
+                        </>
                     }
                 />
             </div>
@@ -61,9 +63,9 @@ export class SignUpPage extends React.Component<SignUpPageProps> {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(args),
-        }).then(resp => {
-            if (resp.status !== 200) {
-                return resp.text().then(text => Promise.reject(new Error(text)))
+        }).then(response => {
+            if (response.status !== 200) {
+                return response.text().then(text => Promise.reject(new Error(text)))
             }
             window.location.replace(getReturnTo(this.props.location))
             return Promise.resolve()

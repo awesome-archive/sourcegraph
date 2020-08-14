@@ -1,6 +1,7 @@
 import { Location } from '@sourcegraph/extension-api-types'
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import H from 'history'
+import { Badged } from 'sourcegraph'
+import * as H from 'history'
 import { upperFirst } from 'lodash'
 import AlertCircleIcon from 'mdi-react/AlertCircleIcon'
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
@@ -12,8 +13,9 @@ import { FileMatch, IFileMatch, ILineMatch } from '../../components/FileMatch'
 import { VirtualList } from '../../components/VirtualList'
 import { SettingsCascadeProps } from '../../settings/settings'
 import { asError, ErrorLike, isErrorLike } from '../../util/errors'
-import { propertyIsDefined } from '../../util/types'
-import { parseRepoURI, toPrettyBlobURL } from '../../util/url'
+import { property, isDefined } from '../../util/types'
+import { parseRepoURI, toPrettyBlobURL, toRepoURL } from '../../util/url'
+import { VersionContextProps } from '../../search/util'
 
 export const FileLocationsError: React.FunctionComponent<{ error: ErrorLike }> = ({ error }) => (
     <div className="file-locations__error alert alert-danger m-2">
@@ -27,7 +29,7 @@ export const FileLocationsNotFound: React.FunctionComponent = () => (
     </div>
 )
 
-interface Props extends SettingsCascadeProps {
+interface Props extends SettingsCascadeProps, VersionContextProps {
     location: H.Location
     /**
      * The observable that emits the locations.
@@ -47,7 +49,7 @@ interface Props extends SettingsCascadeProps {
     fetchHighlightedFileLines: (ctx: FetchFileCtx, force?: boolean) => Observable<string[]>
 }
 
-const LOADING: 'loading' = 'loading'
+const LOADING = 'loading' as const
 
 interface State {
     /**
@@ -84,7 +86,10 @@ export class FileLocations extends React.PureComponent<Props, State> {
                     startWith(LOADING),
                     map(result => ({ locationsOrError: result }))
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), error => console.error(error))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate),
+                    error => console.error(error)
+                )
         )
 
         this.componentUpdates.next(this.props)
@@ -109,21 +114,21 @@ export class FileLocations extends React.PureComponent<Props, State> {
             return <FileLocationsNotFound />
         }
 
-        // Locations by fully qualified URI, like git://github.com/gorilla/mux?rev#mux.go
+        // Locations by fully qualified URI, like git://github.com/gorilla/mux?revision#mux.go
         const locationsByURI = new Map<string, Location[]>()
 
         // URIs with >0 locations, in order (to avoid jitter as more results stream in).
         const orderedURIs: { uri: string; repo: string }[] = []
 
         if (this.state.locationsOrError) {
-            for (const loc of this.state.locationsOrError) {
-                if (!locationsByURI.has(loc.uri)) {
-                    locationsByURI.set(loc.uri, [])
+            for (const location of this.state.locationsOrError) {
+                if (!locationsByURI.has(location.uri)) {
+                    locationsByURI.set(location.uri, [])
 
-                    const { repoName } = parseRepoURI(loc.uri)
-                    orderedURIs.push({ uri: loc.uri, repo: repoName })
+                    const { repoName } = parseRepoURI(location.uri)
+                    orderedURIs.push({ uri: location.uri, repo: repoName })
                 }
-                locationsByURI.get(loc.uri)!.push(loc)
+                locationsByURI.get(location.uri)!.push(location)
             }
         }
 
@@ -132,12 +137,12 @@ export class FileLocations extends React.PureComponent<Props, State> {
                 <VirtualList
                     itemsToShow={this.state.itemsToShow}
                     onShowMoreItems={this.onShowMoreItems}
-                    items={orderedURIs.map(({ uri, repo }, i) => (
+                    items={orderedURIs.map(({ uri, repo }, index) => (
                         <FileMatch
-                            key={i}
+                            key={index}
                             location={this.props.location}
                             expanded={true}
-                            result={refsToFileMatch(uri, locationsByURI.get(uri)!)}
+                            result={referencesToFileMatch(uri, locationsByURI.get(uri)!)}
                             icon={this.props.icon}
                             onSelect={this.onSelect}
                             showAllMatches={true}
@@ -162,42 +167,38 @@ export class FileLocations extends React.PureComponent<Props, State> {
     }
 }
 
-function refsToFileMatch(uri: string, refs: Location[]): IFileMatch {
-    const p = parseRepoURI(uri)
+function referencesToFileMatch(uri: string, references: Badged<Location>[]): IFileMatch {
+    const parsedUri = parseRepoURI(uri)
     return {
         file: {
-            path: p.filePath || '',
-            url: toPrettyBlobURL({ repoName: p.repoName, filePath: p.filePath!, rev: p.commitID || '' }),
+            path: parsedUri.filePath || '',
+            url: toPrettyBlobURL({
+                repoName: parsedUri.repoName,
+                filePath: parsedUri.filePath!,
+                revision: parsedUri.commitID || '',
+            }),
             commit: {
-                oid: p.commitID || p.rev,
+                oid: (parsedUri.commitID || parsedUri.revision)!,
             },
         },
         repository: {
-            name: p.repoName,
+            name: parsedUri.repoName,
             // This is the only usage of toRepoURL, and it is arguably simpler than getting the value from the
             // GraphQL API. We will be removing these old-style git: URIs eventually, so it's not worth fixing this
             // deprecated usage.
-            //
-            // tslint:disable-next-line deprecation
-            url: toRepoURL(p.repoName),
+            url: toRepoURL(parsedUri),
         },
         limitHit: false,
-        lineMatches: refs.filter(propertyIsDefined('range')).map(
-            (ref): ILineMatch => ({
+        lineMatches: references.filter(property('range', isDefined)).map(
+            (reference): ILineMatch => ({
                 preview: '',
                 limitHit: false,
-                lineNumber: ref.range.start.line,
-                offsetAndLengths: [[ref.range.start.character, ref.range.end.character - ref.range.start.character]],
+                lineNumber: reference.range.start.line,
+                offsetAndLengths: [
+                    [reference.range.start.character, reference.range.end.character - reference.range.start.character],
+                ],
+                badge: reference.badge,
             })
         ),
     }
-}
-
-/**
- * Returns the URL path for the given repository name.
- *
- * @deprecated Obtain the repository's URL from the GraphQL Repository.url field instead.
- */
-function toRepoURL(repoName: string): string {
-    return `/${repoName}`
 }

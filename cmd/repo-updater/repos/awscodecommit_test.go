@@ -3,8 +3,9 @@ package repos
 import (
 	"testing"
 
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/awscodecommit"
-	"github.com/sourcegraph/sourcegraph/pkg/httpcli"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/awscodecommit"
+	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/schema"
 )
 
@@ -21,7 +22,7 @@ func TestAWSCodeCommitSource_Exclude(t *testing.T) {
 	}
 
 	fact := httpcli.NewFactory(httpcli.NewMiddleware())
-	svc := ExternalService{Kind: "AWSCODECOMMIT"}
+	svc := ExternalService{Kind: extsvc.KindAWSCodeCommit}
 	conn, err := newAWSCodeCommitSource(&svc, config, fact)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +39,6 @@ func TestAWSCodeCommitSource_Exclude(t *testing.T) {
 		{"id does not match", &awscodecommit.Repository{ID: "id99"}, false},
 		{"name and id match", &awscodecommit.Repository{ID: "id2", Name: "other-repository"}, true},
 		{"name or id match", &awscodecommit.Repository{ID: "id1", Name: "made-up-name"}, true},
-		{"name does not match case", &awscodecommit.Repository{Name: "MY-REPOSITORY"}, false},
 	} {
 
 		tc := tc

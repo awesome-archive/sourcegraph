@@ -21,7 +21,7 @@ interface State {
     sideloadedExtensionURL?: string | null
 }
 
-export class ExtensionStatus extends React.PureComponent<Props, State> {
+class ExtensionStatus extends React.PureComponent<Props, State> {
     public state: State = {}
 
     private componentUpdates = new Subject<Props>()
@@ -36,10 +36,13 @@ export class ExtensionStatus extends React.PureComponent<Props, State> {
             extensionsController
                 .pipe(
                     switchMap(extensionsController => extensionsController.services.extensions.activeExtensions),
-                    catchError(err => [asError(err)]),
+                    catchError(error => [asError(error)]),
                     map(extensionsOrError => ({ extensionsOrError }))
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), err => console.error(err))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate),
+                    error => console.error(error)
+                )
         )
 
         const platformContext = this.componentUpdates.pipe(
@@ -73,9 +76,9 @@ export class ExtensionStatus extends React.PureComponent<Props, State> {
                         <div className="alert alert-danger mb-0 rounded-0">{this.state.extensionsOrError.message}</div>
                     ) : this.state.extensionsOrError.length > 0 ? (
                         <div className="list-group list-group-flush">
-                            {this.state.extensionsOrError.map(({ id }, i) => (
+                            {this.state.extensionsOrError.map(({ id }, index) => (
                                 <div
-                                    key={i}
+                                    key={index}
                                     className="list-group-item py-2 d-flex align-items-center justify-content-between"
                                 >
                                     <this.props.link id={id} />
@@ -136,7 +139,7 @@ export class ExtensionStatus extends React.PureComponent<Props, State> {
         )
     }
 
-    private setSideloadedExtensionURL = () => {
+    private setSideloadedExtensionURL = (): void => {
         const url = window.prompt(
             'Parcel dev server URL:',
             this.state.sideloadedExtensionURL || 'http://localhost:1234'
@@ -144,7 +147,7 @@ export class ExtensionStatus extends React.PureComponent<Props, State> {
         this.props.platformContext.sideloadedExtensionURL.next(url)
     }
 
-    private clearSideloadedExtensionURL = () => {
+    private clearSideloadedExtensionURL = (): void => {
         this.props.platformContext.sideloadedExtensionURL.next(null)
     }
 }

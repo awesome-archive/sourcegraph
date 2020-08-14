@@ -1,16 +1,23 @@
 package repos
 
 import (
+	"context"
+	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/awscodecommit"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/bitbucketserver"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/github"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/gitlab"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/gitolite"
-	"github.com/sourcegraph/sourcegraph/pkg/jsonc"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/awscodecommit"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/bitbucketserver"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/github"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/gitlab"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/gitolite"
+	"github.com/sourcegraph/sourcegraph/internal/jsonc"
+	"github.com/sourcegraph/sourcegraph/internal/ratelimit"
+	"github.com/sourcegraph/sourcegraph/schema"
+	"golang.org/x/time/rate"
 )
 
 func TestExternalService_Exclude(t *testing.T) {
@@ -24,7 +31,7 @@ func TestExternalService_Exclude(t *testing.T) {
 	}
 
 	githubService := ExternalService{
-		Kind:        "GITHUB",
+		Kind:        extsvc.KindGitHub,
 		DisplayName: "Github",
 		Config: `{
 			// Some comment
@@ -37,7 +44,7 @@ func TestExternalService_Exclude(t *testing.T) {
 	}
 
 	gitlabService := ExternalService{
-		Kind:        "GITLAB",
+		Kind:        extsvc.KindGitLab,
 		DisplayName: "GitLab",
 		Config: `{
 			// Some comment
@@ -50,7 +57,7 @@ func TestExternalService_Exclude(t *testing.T) {
 	}
 
 	bitbucketServerService := ExternalService{
-		Kind:        "BITBUCKETSERVER",
+		Kind:        extsvc.KindBitbucketServer,
 		DisplayName: "Bitbucket Server",
 		Config: `{
 			// Some comment
@@ -65,7 +72,7 @@ func TestExternalService_Exclude(t *testing.T) {
 
 	awsCodeCommitService := ExternalService{
 		ID:          9,
-		Kind:        "AWSCODECOMMIT",
+		Kind:        extsvc.KindAWSCodeCommit,
 		DisplayName: "AWS CodeCommit",
 		Config: `{
 			"region": "us-west-1",
@@ -78,7 +85,7 @@ func TestExternalService_Exclude(t *testing.T) {
 	}
 
 	gitoliteService := ExternalService{
-		Kind:        "GITOLITE",
+		Kind:        extsvc.KindGitolite,
 		DisplayName: "Gitolite",
 		Config: `{
 			// Some comment
@@ -90,7 +97,7 @@ func TestExternalService_Exclude(t *testing.T) {
 	}
 
 	otherService := ExternalService{
-		Kind:        "OTHER",
+		Kind:        extsvc.KindOther,
 		DisplayName: "Other code hosts",
 		Config: formatJSON(t, `{
 			"url": "https://git-host.mycorp.com",
@@ -160,14 +167,14 @@ func TestExternalService_Exclude(t *testing.T) {
 			Name: "git-host.mycorp.com/org/foo",
 			ExternalRepo: api.ExternalRepoSpec{
 				ID:          "1",
-				ServiceType: "other",
+				ServiceType: extsvc.TypeOther,
 				ServiceID:   "https://git-host.mycorp.com/",
 			},
 		},
 		{
 			Name: "git-host.mycorp.com/org/baz",
 			ExternalRepo: api.ExternalRepoSpec{
-				ServiceType: "other",
+				ServiceType: extsvc.TypeOther,
 				ServiceID:   "https://git-host.mycorp.com/",
 			},
 		},
@@ -437,6 +444,40 @@ func TestExternalService_Exclude(t *testing.T) {
 	}
 }
 
+func TestReposNamesSummary(t *testing.T) {
+	var rps Repos
+
+	eid := func(id int) api.ExternalRepoSpec {
+		return api.ExternalRepoSpec{
+			ID:          strconv.Itoa(id),
+			ServiceType: "fake",
+			ServiceID:   "https://fake.com",
+		}
+	}
+
+	for i := 0; i < 5; i++ {
+		rps = append(rps, &Repo{Name: "bar", ExternalRepo: eid(i)})
+	}
+
+	expected := "bar bar bar bar bar"
+	ns := rps.NamesSummary()
+	if ns != expected {
+		t.Errorf("expected %s, got %s", expected, ns)
+	}
+
+	rps = nil
+
+	for i := 0; i < 22; i++ {
+		rps = append(rps, &Repo{Name: "b", ExternalRepo: eid(i)})
+	}
+
+	expected = "b b b b b b b b b b b b b b b b b b b b..."
+	ns = rps.NamesSummary()
+	if ns != expected {
+		t.Errorf("expected %s, got %s", expected, ns)
+	}
+}
+
 // Our uses of pick happen from iterating through a map. So we can't guarantee
 // that we test both pick(a, b) and pick(b, a) without writing this specific
 // test.
@@ -466,4 +507,194 @@ func formatJSON(t testing.TB, s string) string {
 	}
 
 	return formatted
+}
+
+func TestSyncRateLimiters(t *testing.T) {
+	now := time.Now()
+	ctx := context.Background()
+
+	baseURL := "http://gitlab.com/"
+
+	type limitOptions struct {
+		includeLimit bool
+		enabled      bool
+		perHour      float64
+	}
+
+	makeLister := func(options ...limitOptions) *MockExternalServicesLister {
+		services := make([]*ExternalService, 0, len(options))
+		for i, o := range options {
+			svc := &ExternalService{
+				ID:          int64(i) + 1,
+				Kind:        "GitLab",
+				DisplayName: "GitLab",
+				CreatedAt:   now,
+				UpdatedAt:   now,
+				DeletedAt:   time.Time{},
+			}
+			config := schema.GitLabConnection{
+				Url: baseURL,
+			}
+			if o.includeLimit {
+				config.RateLimit = &schema.GitLabRateLimit{
+					RequestsPerHour: o.perHour,
+					Enabled:         o.enabled,
+				}
+			}
+			data, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			svc.Config = string(data)
+			services = append(services, svc)
+		}
+		return &MockExternalServicesLister{
+			listExternalServices: func(ctx context.Context, args StoreListExternalServicesArgs) ([]*ExternalService, error) {
+				return services, nil
+			},
+		}
+	}
+
+	for _, tc := range []struct {
+		name    string
+		options []limitOptions
+		want    rate.Limit
+	}{
+		{
+			name:    "No limiters defined",
+			options: []limitOptions{},
+			want:    rate.Inf,
+		},
+		{
+			name: "One limit, enabled",
+			options: []limitOptions{
+				{
+					includeLimit: true,
+					enabled:      true,
+					perHour:      3600,
+				},
+			},
+			want: rate.Limit(1),
+		},
+		{
+			name: "Two limits, enabled",
+			options: []limitOptions{
+				{
+					includeLimit: true,
+					enabled:      true,
+					perHour:      3600,
+				},
+				{
+					includeLimit: true,
+					enabled:      true,
+					perHour:      7200,
+				},
+			},
+			want: rate.Limit(1),
+		},
+		{
+			name: "One limit, disabled",
+			options: []limitOptions{
+				{
+					includeLimit: true,
+					enabled:      false,
+					perHour:      3600,
+				},
+			},
+			want: rate.Inf,
+		},
+		{
+			name: "One limit, zero",
+			options: []limitOptions{
+				{
+					includeLimit: true,
+					enabled:      true,
+					perHour:      0,
+				},
+			},
+			want: rate.Limit(0),
+		},
+		{
+			name: "No limit",
+			options: []limitOptions{
+				{
+					includeLimit: false,
+				},
+			},
+			want: rate.Limit(10),
+		},
+		{
+			name: "Two limits, one default",
+			options: []limitOptions{
+				{
+					includeLimit: true,
+					enabled:      true,
+					perHour:      3600,
+				},
+				{
+					includeLimit: false,
+				},
+			},
+			want: rate.Limit(1),
+		},
+		// Default for GitLab is 10 per second
+		{
+			name: "Default, Higher than default",
+			options: []limitOptions{
+				{
+					includeLimit: true,
+					enabled:      true,
+					perHour:      20 * 3600,
+				},
+				{
+					includeLimit: false,
+				},
+			},
+			want: rate.Limit(20),
+		},
+		{
+			name: "Higher than default, Default",
+			options: []limitOptions{
+				{
+					includeLimit: false,
+				},
+				{
+					includeLimit: true,
+					enabled:      true,
+					perHour:      20 * 3600,
+				},
+			},
+			want: rate.Limit(20),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := ratelimit.NewRegistry()
+			r := &RateLimitSyncer{
+				registry:      reg,
+				serviceLister: makeLister(tc.options...),
+			}
+
+			err := r.SyncRateLimiters(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// We should have the lower limit
+			l := reg.Get(baseURL)
+			if l == nil {
+				t.Fatalf("expected a limiter")
+			}
+			if l.Limit() != tc.want {
+				t.Fatalf("Expected limit %f, got %f", tc.want, l.Limit())
+			}
+		})
+	}
+}
+
+type MockExternalServicesLister struct {
+	listExternalServices func(context.Context, StoreListExternalServicesArgs) ([]*ExternalService, error)
+}
+
+func (m MockExternalServicesLister) ListExternalServices(ctx context.Context, args StoreListExternalServicesArgs) ([]*ExternalService, error) {
+	return m.listExternalServices(ctx, args)
 }

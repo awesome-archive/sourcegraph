@@ -1,12 +1,13 @@
 import { isEqual, mapValues } from 'lodash'
-import { BehaviorSubject, combineLatest, isObservable, Observable, of, Subscribable, Unsubscribable } from 'rxjs'
+import { BehaviorSubject, combineLatest, isObservable, Observable, of, Subscribable, Unsubscribable, from } from 'rxjs'
 import { distinctUntilChanged, map, switchMap } from 'rxjs/operators'
 import { combineLatestOrDefault } from '../../../util/rxjs/combineLatestOrDefault'
 import { ContributableMenu, Contributions, Evaluated, MenuItemContribution, Raw } from '../../protocol'
 import { Context, ContributionScope, getComputedContextProperty } from '../context/context'
 import { ComputedContext, Expression, parse, parseTemplate } from '../context/expr/evaluator'
-import { EditorService } from './editorService'
-import { SettingsService } from './settings'
+import { ViewerService, ViewerWithPartialModel } from './viewerService'
+import { ModelService } from './modelService'
+import { PlatformContext } from '../../../platform/context'
 
 /** A registered set of contributions from an extension in the registry. */
 export interface ContributionsEntry {
@@ -34,8 +35,9 @@ export class ContributionRegistry {
     private _entries = new BehaviorSubject<ContributionsEntry[]>([])
 
     constructor(
-        private editorService: Pick<EditorService, 'editorsAndModels'>,
-        private settingsService: Pick<SettingsService, 'data'>,
+        private viewerService: Pick<ViewerService, 'activeViewerUpdates'>,
+        private modelService: Pick<ModelService, 'getPartialModel'>,
+        private settings: PlatformContext['settings'],
         private context: Subscribable<Context<any>>
     ) {}
 
@@ -43,13 +45,13 @@ export class ContributionRegistry {
      * Register contributions and return an unsubscribable that deregisters the contributions.
      * Any expressions in the contributions need to be already parsed for fast re-evaluation.
      */
-    public registerContributions(entry: ContributionsEntry): ContributionUnsubscribable {
-        this._entries.next([...this._entries.value, entry])
+    public registerContributions(entryToRegister: ContributionsEntry): ContributionUnsubscribable {
+        this._entries.next([...this._entries.value, entryToRegister])
         return {
             unsubscribe: () => {
-                this._entries.next(this._entries.value.filter(e => e !== entry))
+                this._entries.next(this._entries.value.filter(entry => entry !== entryToRegister))
             },
-            entry,
+            entry: entryToRegister,
         }
     }
 
@@ -62,10 +64,10 @@ export class ContributionRegistry {
         previous: ContributionUnsubscribable,
         next: ContributionsEntry
     ): ContributionUnsubscribable {
-        this._entries.next([...this._entries.value.filter(e => e !== previous.entry), next])
+        this._entries.next([...this._entries.value.filter(entry => entry !== previous.entry), next])
         return {
             unsubscribe: () => {
-                this._entries.next(this._entries.value.filter(e => e !== next))
+                this._entries.next(this._entries.value.filter(entry => entry !== next))
             },
             entry: next,
         }
@@ -110,11 +112,26 @@ export class ContributionRegistry {
                     )
                 )
             ),
-            this.editorService.editorsAndModels,
-            this.settingsService.data,
+            from(this.viewerService.activeViewerUpdates).pipe(
+                map((activeEditor): ViewerWithPartialModel | undefined => {
+                    if (!activeEditor) {
+                        return undefined
+                    }
+                    switch (activeEditor.type) {
+                        case 'CodeEditor':
+                            return {
+                                ...activeEditor,
+                                model: this.modelService.getPartialModel(activeEditor.resource),
+                            }
+                        case 'DirectoryViewer':
+                            return activeEditor
+                    }
+                })
+            ),
+            this.settings,
             this.context,
         ]).pipe(
-            map(([multiContributions, editors, settings, context]) => {
+            map(([multiContributions, activeEditor, settings, context]) => {
                 // Merge in extra context.
                 if (extraContext) {
                     context = { ...context, ...extraContext }
@@ -122,23 +139,23 @@ export class ContributionRegistry {
 
                 // TODO(sqs): use {@link ContextService#observeValue}
                 const computedContext = {
-                    get: (key: string) => getComputedContextProperty(editors, settings, context, key, scope),
+                    get: (key: string) => getComputedContextProperty(activeEditor, settings, context, key, scope),
                 }
                 return multiContributions.flat().map(contributions => {
                     try {
                         return filterContributions(evaluateContributions(computedContext, contributions))
-                    } catch (err) {
+                    } catch (error) {
                         // An error during evaluation causes all of the contributions in the same entry to be
                         // discarded.
                         logWarning('Discarding contributions: evaluating expressions or templates failed.', {
                             contributions,
-                            err,
+                            error,
                         })
                         return {}
                     }
                 })
             }),
-            map(c => mergeContributions(c)),
+            map(mergeContributions),
             distinctUntilChanged((a, b) => isEqual(a, b))
         )
     }
@@ -167,36 +184,65 @@ export function mergeContributions(contributions: Evaluated<Contributions>[]): E
         return contributions[0]
     }
     const merged: Evaluated<Contributions> = {}
-    for (const c of contributions) {
-        if (c.actions) {
-            if (!merged.actions) {
-                merged.actions = [...c.actions]
-            } else {
-                merged.actions = [...merged.actions, ...c.actions]
+    for (const contribution of contributions) {
+        // swallow errors from malformed manifests to prevent breaking other
+        // contributions or extensions: https://github.com/sourcegraph/sourcegraph/pull/12573
+        if (contribution.actions) {
+            try {
+                if (!merged.actions) {
+                    merged.actions = [...contribution.actions]
+                } else {
+                    merged.actions = [...merged.actions, ...contribution.actions]
+                }
+            } catch {
+                // noop
             }
         }
-        if (c.menus) {
-            if (!merged.menus) {
-                merged.menus = { ...c.menus }
-            } else {
-                for (const [menu, items] of Object.entries(c.menus) as [
-                    ContributableMenu,
-                    Evaluated<MenuItemContribution>[]
-                ][]) {
-                    const mergedItems = merged.menus[menu]
-                    if (!mergedItems) {
-                        merged.menus[menu] = [...items]
-                    } else {
-                        merged.menus[menu] = [...mergedItems, ...items]
+        if (contribution.menus) {
+            try {
+                if (!merged.menus) {
+                    merged.menus = { ...contribution.menus }
+                } else {
+                    for (const [menu, items] of Object.entries(contribution.menus) as [
+                        ContributableMenu,
+                        Evaluated<MenuItemContribution>[]
+                    ][]) {
+                        const mergedItems = merged.menus[menu]
+                        try {
+                            if (!mergedItems) {
+                                merged.menus[menu] = [...items]
+                            } else {
+                                merged.menus[menu] = [...mergedItems, ...items]
+                            }
+                        } catch {
+                            // noop
+                        }
                     }
                 }
+            } catch {
+                // noop
             }
         }
-        if (c.searchFilters) {
-            if (!merged.searchFilters) {
-                merged.searchFilters = [...c.searchFilters]
-            } else {
-                merged.searchFilters = [...merged.searchFilters, ...c.searchFilters]
+        if (contribution.views) {
+            try {
+                if (!merged.views) {
+                    merged.views = [...contribution.views]
+                } else {
+                    merged.views = [...merged.views, ...contribution.views]
+                }
+            } catch {
+                // noop
+            }
+        }
+        if (contribution.searchFilters) {
+            try {
+                if (!merged.searchFilters) {
+                    merged.searchFilters = [...contribution.searchFilters]
+                } else {
+                    merged.searchFilters = [...merged.searchFilters, ...contribution.searchFilters]
+                }
+            } catch {
+                // noop
             }
         }
     }
@@ -212,10 +258,7 @@ export function filterContributions(contributions: Evaluated<Contributions>): Ev
     }
     return {
         ...contributions,
-        menus: mapValues(
-            contributions.menus,
-            menuItems => menuItems && menuItems.filter(menuItem => menuItem.when !== false)
-        ),
+        menus: mapValues(contributions.menus, menuItems => menuItems?.filter(menuItem => menuItem.when !== false)),
     }
 }
 
@@ -232,14 +275,8 @@ export function evaluateContributions(
         ...contributions,
         menus:
             contributions.menus &&
-            mapValues(
-                contributions.menus,
-                (menuItems): Evaluated<MenuItemContribution>[] | undefined =>
-                    menuItems &&
-                    menuItems.map(menuItem => ({
-                        ...menuItem,
-                        when: menuItem.when && !!menuItem.when.exec(context),
-                    }))
+            mapValues(contributions.menus, (menuItems): Evaluated<MenuItemContribution>[] | undefined =>
+                menuItems?.map(menuItem => ({ ...menuItem, when: menuItem.when && !!menuItem.when.exec(context) }))
             ),
         actions: evaluateActionContributions(context, contributions.actions),
     }
@@ -252,27 +289,24 @@ function evaluateActionContributions(
     context: ComputedContext,
     actions: Contributions['actions']
 ): Evaluated<Contributions['actions']> {
-    return (
-        actions &&
-        actions.map(action => ({
-            ...action,
-            title: action.title && action.title.exec(context),
-            category: action.category && action.category.exec(context),
-            description: action.description && action.description.exec(context),
-            iconURL: action.iconURL && action.iconURL.exec(context),
-            actionItem: action.actionItem && {
-                ...action.actionItem,
-                label: action.actionItem.label && action.actionItem.label.exec(context),
-                description: action.actionItem.description && action.actionItem.description.exec(context),
-                iconURL: action.actionItem.iconURL && action.actionItem.iconURL.exec(context),
-                iconDescription: action.actionItem.iconDescription && action.actionItem.iconDescription.exec(context),
-                pressed: action.actionItem.pressed && action.actionItem.pressed.exec(context),
-            },
-            commandArguments:
-                action.commandArguments &&
-                action.commandArguments.map(arg => (arg instanceof Expression ? arg.exec(context) : arg)),
-        }))
-    )
+    return actions?.map(action => ({
+        ...action,
+        title: action.title?.exec(context),
+        category: action.category?.exec(context),
+        description: action.description?.exec(context),
+        iconURL: action.iconURL?.exec(context),
+        actionItem: action.actionItem && {
+            ...action.actionItem,
+            label: action.actionItem.label?.exec(context),
+            description: action.actionItem.description?.exec(context),
+            iconURL: action.actionItem.iconURL?.exec(context),
+            iconDescription: action.actionItem.iconDescription?.exec(context),
+            pressed: action.actionItem.pressed?.exec(context),
+        },
+        commandArguments: action.commandArguments?.map(argument =>
+            argument instanceof Expression ? argument.exec(context) : argument
+        ),
+    }))
 }
 
 /**
@@ -283,45 +317,39 @@ export function parseContributionExpressions(contributions: Raw<Contributions>):
         ...contributions,
         menus:
             contributions.menus &&
-            mapValues(
-                contributions.menus,
-                (menuItems): MenuItemContribution[] | undefined =>
-                    menuItems &&
-                    menuItems.map(menuItem => ({
-                        ...menuItem,
-                        when: typeof menuItem.when === 'string' ? parse<boolean>(menuItem.when) : undefined,
-                    }))
+            mapValues(contributions.menus, (menuItems): MenuItemContribution[] | undefined =>
+                menuItems?.map(menuItem => ({
+                    ...menuItem,
+                    when: typeof menuItem.when === 'string' ? parse<boolean>(menuItem.when) : undefined,
+                }))
             ),
         actions: contributions && parseActionContributionExpressions(contributions.actions),
     }
 }
 
-const maybe = <T, R>(value: T | undefined, fn: (value: T) => R): R | undefined =>
-    value === undefined ? undefined : fn(value)
+const maybe = <T, R>(value: T | undefined, function_: (value: T) => R): R | undefined =>
+    value === undefined ? undefined : function_(value)
 
 /**
  * Evaluates expressions in contribution definitions against the given context.
  */
 function parseActionContributionExpressions(actions: Raw<Contributions['actions']>): Contributions['actions'] {
-    return (
-        actions &&
-        actions.map(action => ({
-            ...action,
-            title: maybe(action.title, parseTemplate),
-            category: maybe(action.category, parseTemplate),
-            description: maybe(action.description, parseTemplate),
-            iconURL: maybe(action.iconURL, parseTemplate),
-            actionItem: action.actionItem && {
-                ...action.actionItem,
-                label: maybe(action.actionItem.label, parseTemplate),
-                description: maybe(action.actionItem.description, parseTemplate),
-                iconURL: maybe(action.actionItem.iconURL, parseTemplate),
-                iconDescription: maybe(action.actionItem.iconDescription, parseTemplate),
-                pressed: maybe(action.actionItem.pressed, pressed => parse(pressed)),
-            },
-            commandArguments:
-                action.commandArguments &&
-                action.commandArguments.map(arg => (typeof arg === 'string' ? parseTemplate(arg) : arg)),
-        }))
-    )
+    return actions?.map(action => ({
+        ...action,
+        title: maybe(action.title, parseTemplate),
+        category: maybe(action.category, parseTemplate),
+        description: maybe(action.description, parseTemplate),
+        iconURL: maybe(action.iconURL, parseTemplate),
+        actionItem: action.actionItem && {
+            ...action.actionItem,
+            label: maybe(action.actionItem.label, parseTemplate),
+            description: maybe(action.actionItem.description, parseTemplate),
+            iconURL: maybe(action.actionItem.iconURL, parseTemplate),
+            iconDescription: maybe(action.actionItem.iconDescription, parseTemplate),
+            pressed: maybe(action.actionItem.pressed, pressed => parse(pressed)),
+        },
+        commandArguments: action.commandArguments?.map(argument =>
+            typeof argument === 'string' ? parseTemplate(argument) : argument
+        ),
+    }))
 }

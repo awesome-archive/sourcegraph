@@ -24,11 +24,11 @@ export interface SiteAdminSidebarProps {
  * Sidebar for the site admin area.
  */
 export const SiteAdminSidebar: React.FunctionComponent<SiteAdminSidebarProps> = ({ className, groups }) => (
-    <div className={`mt-3 site-admin-sidebar ${className}`}>
+    <div className={`site-admin-sidebar ${className}`}>
         {groups.map(
-            ({ header, items, condition = () => true }, i) =>
+            ({ header, items, condition = () => true }, index) =>
                 condition({}) && (
-                    <SidebarGroup key={i}>
+                    <SidebarGroup key={index}>
                         {header && <SidebarGroupHeader icon={header.icon} label={header.label} />}
                         <SidebarGroupItems>
                             {items.map(
@@ -45,11 +45,16 @@ export const SiteAdminSidebar: React.FunctionComponent<SiteAdminSidebarProps> = 
         )}
 
         <Link to="/api/console" className={SIDEBAR_BUTTON_CLASS}>
-            <ConsoleIcon className="icon-inline" />
-            API console
+            <ConsoleIcon className="icon-inline" /> API console
         </Link>
         <a href="/-/debug/" className={SIDEBAR_BUTTON_CLASS}>
             Instrumentation
+        </a>
+        <a href="/-/debug/grafana" className={SIDEBAR_BUTTON_CLASS}>
+            Monitoring
+        </a>
+        <a href="/-/debug/jaeger" className={SIDEBAR_BUTTON_CLASS}>
+            Tracing
         </a>
     </div>
 )

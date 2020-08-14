@@ -8,7 +8,7 @@ describe('util/dom', () => {
 
         beforeEach(() => {
             document.body.innerHTML = `<table><tbody><td id="cell">${cellInnerHTML}</td></tbody></table>`
-            cell = window.document.getElementById('cell') as HTMLTableCellElement
+            cell = window.document.querySelector<HTMLTableCellElement>('#cell')!
         })
 
         test('highlights no characters', () => {
@@ -42,6 +42,14 @@ describe('util/dom', () => {
             dom.highlightNode(cell, 23, 2)
             const newCell =
                 '<span style="color:#c0c5ce;"><span>\t</span></span><span style="color:#fff3bf;"><span><span>S<span class="selection-highlight">er</span>veHTTP</span></span></span><span style="color:#c0c5ce;"><span>(</span></span><span style="color:#c0c5ce;"><span><span>ResponseWrit<span class="selection-highlight">er</span></span></span></span><span style="color:#c0c5ce;"><span>,</span></span><span style="color:#c0c5ce;"><span> </span></span><span style="color:#329af0;"><span>*</span></span><span style="color:#c0c5ce;"><span>Request</span></span><span style="color:#c0c5ce;"><span>)</span></span>'
+            expect(cell.innerHTML).toBe(newCell)
+        })
+
+        test('does not repeatedly highlight multiple nodes', () => {
+            dom.highlightNode(cell, 0, 11)
+            dom.highlightNode(cell, 0, 23)
+            const newCell =
+                '<span style="color:#c0c5ce;"><span><span><span class="selection-highlight">	</span></span></span></span><span style="color:#fff3bf;"><span><span><span class="selection-highlight">ServeHTTP</span></span></span></span><span style="color:#c0c5ce;"><span><span><span class="selection-highlight">(</span></span></span></span><span style="color:#c0c5ce;"><span><span><span class="selection-highlight">ResponseWrit</span>er</span></span></span><span style="color:#c0c5ce;"><span>,</span></span><span style="color:#c0c5ce;"><span> </span></span><span style="color:#329af0;"><span>*</span></span><span style="color:#c0c5ce;"><span>Request</span></span><span style="color:#c0c5ce;"><span>)</span></span>'
             expect(cell.innerHTML).toBe(newCell)
         })
 

@@ -1,12 +1,13 @@
 import { Location } from '@sourcegraph/extension-api-types'
-import { from, Observable } from 'rxjs'
-import { catchError, map } from 'rxjs/operators'
+import { Observable, of, concat } from 'rxjs'
+import { catchError, map, switchMap, defaultIfEmpty } from 'rxjs/operators'
 import { combineLatestOrDefault } from '../../../util/rxjs/combineLatestOrDefault'
 import { TextDocumentPositionParams, TextDocumentRegistrationOptions } from '../../protocol'
 import { match, TextDocumentIdentifier } from '../types/textDocument'
-import { CodeEditorWithPartialModel } from './editorService'
+import { CodeEditorWithPartialModel } from './viewerService'
 import { DocumentFeatureProviderRegistry } from './registry'
-import { flattenAndCompact } from './util'
+import { MaybeLoadingResult, LOADING } from '@sourcegraph/codeintellify'
+import { finallyReleaseProxy } from '../api/common'
 
 /**
  * Function signature for retrieving related locations given a location (e.g., definition, implementation, and type
@@ -34,33 +35,31 @@ export class TextDocumentLocationProviderRegistry<
      * outer observable never completes because providers may be registered and unregistered at any
      * time.
      */
-    public getLocations(params: P): Observable<Observable<L[] | null>> {
-        return getLocationsFromProviders(this.providersForDocument(params.textDocument), params)
+    public getLocations(parameters: P): Observable<MaybeLoadingResult<L[]>> {
+        return getLocationsFromProviders(this.providersForDocument(parameters.textDocument), parameters)
     }
 
     /**
      * Reports whether there are any location providers registered for the active text document.
      * This can be used, for example, to selectively show a "Find references" button if there are
      * any reference providers registered.
-     *
-     * @param editors The code editors in {@link EditorService}.
      */
-    public hasProvidersForActiveTextDocument(editors: readonly CodeEditorWithPartialModel[]): Observable<boolean> {
+    public hasProvidersForActiveTextDocument(
+        activeEditor: CodeEditorWithPartialModel | undefined
+    ): Observable<boolean> {
+        if (!activeEditor) {
+            return of(false)
+        }
         return this.entries.pipe(
-            map(entries => {
-                const activeEditor = editors.find(({ isActive }) => isActive)
-                if (!activeEditor) {
-                    return false
-                }
-                return (
+            map(
+                entries =>
                     entries.filter(({ registrationOptions }) =>
                         match(registrationOptions.documentSelector, {
                             uri: activeEditor.resource,
                             languageId: activeEditor.model.languageId,
                         })
                     ).length > 0
-                )
-            })
+            )
         )
     }
 }
@@ -80,6 +79,9 @@ export interface TextDocumentProviderIDRegistrationOptions extends TextDocumentR
 /**
  * The registry for text document location providers with a distinguishing ID (i.e., registered using
  * {@link TextDocumentProviderIDRegistrationOptions}).
+ *
+ * @template P The param type of the text document location signature provider.
+ * @template L The result type of the text document location signature provider.
  */
 export class TextDocumentLocationProviderIDRegistry extends DocumentFeatureProviderRegistry<
     ProvideTextDocumentLocationSignature<TextDocumentPositionParams, Location>,
@@ -110,13 +112,16 @@ export class TextDocumentLocationProviderIDRegistry extends DocumentFeatureProvi
      *
      * @param id The provider ID.
      */
-    public getLocations(id: string, params: TextDocumentPositionParams): Observable<Observable<Location[] | null>> {
-        return getLocationsFromProviders(this.providersForDocumentWithID(id, params.textDocument), params)
+    public getLocations(
+        id: string,
+        parameters: TextDocumentPositionParams
+    ): Observable<MaybeLoadingResult<Location[]>> {
+        return getLocationsFromProviders(this.providersForDocumentWithID(id, parameters.textDocument), parameters)
     }
 }
 
 /**
- * Returns the combined results of invoking multiple location providers.
+ * Returns the combined results of invoking multiple location providers and whether any of them are loading.
  *
  * @internal Callers should instead use the the getLocations or similarly named methods on classes
  * defined in this module.
@@ -126,23 +131,33 @@ export function getLocationsFromProviders<
     L extends Location = Location
 >(
     providers: Observable<ProvideTextDocumentLocationSignature<P, L>[]>,
-    params: P,
+    parameters: P,
     logErrors = true
-): Observable<Observable<L[] | null>> {
+): Observable<MaybeLoadingResult<L[]>> {
     return providers.pipe(
-        map(providers =>
+        switchMap(providers =>
             combineLatestOrDefault(
                 providers.map(provider =>
-                    from(provider(params)).pipe(
-                        catchError(err => {
-                            if (logErrors) {
-                                console.error(err)
-                            }
-                            return [null]
-                        })
+                    concat(
+                        [LOADING],
+                        provider(parameters).pipe(
+                            finallyReleaseProxy(),
+                            defaultIfEmpty<typeof LOADING | L[] | null>([]),
+                            catchError(error => {
+                                if (logErrors) {
+                                    console.error('Location provider errored:', error)
+                                }
+                                return [null]
+                            })
+                        )
                     )
                 )
-            ).pipe(map(locations => flattenAndCompact(locations)))
+            ).pipe(
+                map(locationsFromProviders => ({
+                    isLoading: locationsFromProviders.some(locations => locations === LOADING),
+                    result: locationsFromProviders.filter<L[]>(Array.isArray).flat(),
+                }))
+            )
         )
     )
 }

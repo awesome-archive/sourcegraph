@@ -1,3 +1,4 @@
+/* eslint rxjs/no-ignored-subscription: warn */
 import DeleteIcon from 'mdi-react/DeleteIcon'
 import * as React from 'react'
 import { RouteComponentProps } from 'react-router'
@@ -5,7 +6,7 @@ import { Observable, Subject, Subscription } from 'rxjs'
 import { map } from 'rxjs/operators'
 import { gql } from '../../../../../shared/src/graphql/graphql'
 import * as GQL from '../../../../../shared/src/graphql/schema'
-import { createAggregateError } from '../../../../../shared/src/util/errors'
+import { createAggregateError, asError } from '../../../../../shared/src/util/errors'
 import { mutateGraphQL, queryGraphQL } from '../../../backend/graphql'
 import { FilteredConnection } from '../../../components/FilteredConnection'
 import { PageTitle } from '../../../components/PageTitle'
@@ -14,12 +15,15 @@ import { siteFlags } from '../../../site/backend'
 import { eventLogger } from '../../../tracking/eventLogger'
 import { setUserEmailVerified } from '../backend'
 import { AddUserEmailForm } from './AddUserEmailForm'
+import { ErrorAlert } from '../../../components/alerts'
+import * as H from 'history'
 
 interface UserEmailNodeProps {
     node: GQL.IUserEmail
     user: GQL.IUser
 
     onDidUpdate: () => void
+    history: H.History
 }
 
 interface UserEmailNodeState {
@@ -72,13 +76,13 @@ class UserEmailNode extends React.PureComponent<UserEmailNodeProps, UserEmailNod
                     </div>
                 </div>
                 {this.state.errorDescription && (
-                    <div className="alert alert-danger mt-2">{this.state.errorDescription}</div>
+                    <ErrorAlert className="mt-2" error={this.state.errorDescription} history={this.props.history} />
                 )}
             </li>
         )
     }
 
-    private remove = () => {
+    private remove = (): void => {
         if (!window.confirm(`Remove the email address ${this.props.node.email}?`)) {
             return
         }
@@ -113,12 +117,12 @@ class UserEmailNode extends React.PureComponent<UserEmailNodeProps, UserEmailNod
                         this.props.onDidUpdate()
                     }
                 },
-                error => this.setState({ loading: false, errorDescription: error.message })
+                error => this.setState({ loading: false, errorDescription: asError(error).message })
             )
     }
 
-    private setAsVerified = () => this.setVerified(true)
-    private setAsUnverified = () => this.setVerified(false)
+    private setAsVerified = (): void => this.setVerified(true)
+    private setAsUnverified = (): void => this.setVerified(false)
 
     private setVerified(verified: boolean): void {
         this.setState({
@@ -126,6 +130,8 @@ class UserEmailNode extends React.PureComponent<UserEmailNodeProps, UserEmailNod
             loading: true,
         })
 
+        // TODO this may call setState() after the component was unmounted
+        // eslint-disable-next-line rxjs/no-ignored-subscription
         setUserEmailVerified(this.props.user.id, this.props.node.email, verified).subscribe(
             () => {
                 this.setState({ loading: false })
@@ -138,13 +144,14 @@ class UserEmailNode extends React.PureComponent<UserEmailNodeProps, UserEmailNod
                     this.props.onDidUpdate()
                 }
             },
-            error => this.setState({ loading: false, errorDescription: error.message })
+            error => this.setState({ loading: false, errorDescription: asError(error).message })
         )
     }
 }
 
 interface Props extends RouteComponentProps<{}> {
     user: GQL.IUser
+    history: H.History
 }
 
 interface State {
@@ -174,9 +181,10 @@ export class UserSettingsEmailsPage extends React.Component<Props, State> {
     }
 
     public render(): JSX.Element | null {
-        const nodeProps: Pick<UserEmailNodeProps, 'user' | 'onDidUpdate'> = {
+        const nodeProps: Omit<UserEmailNodeProps, 'node'> = {
             user: this.props.user,
             onDidUpdate: this.onDidUpdateUserEmail,
+            history: this.props.history,
         }
 
         return (
@@ -189,7 +197,7 @@ export class UserSettingsEmailsPage extends React.Component<Props, State> {
                         manually verified by a site admin.
                     </div>
                 )}
-                <FilteredConnection<GQL.IUserEmail, Pick<UserEmailNodeProps, 'user' | 'onDidUpdate'>>
+                <FilteredConnection<GQL.IUserEmail, Omit<UserEmailNodeProps, 'node'>>
                     className="list-group list-group-flush mt-3"
                     noun="email address"
                     pluralNoun="email addresses"
@@ -202,12 +210,17 @@ export class UserSettingsEmailsPage extends React.Component<Props, State> {
                     history={this.props.history}
                     location={this.props.location}
                 />
-                <AddUserEmailForm className="mt-4" user={this.props.user.id} onDidAdd={this.onDidUpdateUserEmail} />
+                <AddUserEmailForm
+                    className="mt-4"
+                    user={this.props.user.id}
+                    onDidAdd={this.onDidUpdateUserEmail}
+                    history={this.props.history}
+                />
             </div>
         )
     }
 
-    private queryUserEmails = (args: {}): Observable<UserEmailConnection> =>
+    private queryUserEmails = (): Observable<UserEmailConnection> =>
         queryGraphQL(
             gql`
                 query UserEmails($user: ID!) {
@@ -241,5 +254,5 @@ export class UserSettingsEmailsPage extends React.Component<Props, State> {
             })
         )
 
-    private onDidUpdateUserEmail = () => this.userEmailUpdates.next()
+    private onDidUpdateUserEmail = (): void => this.userEmailUpdates.next()
 }

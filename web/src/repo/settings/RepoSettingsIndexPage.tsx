@@ -15,6 +15,8 @@ import { queryGraphQL } from '../../backend/graphql'
 import { PageTitle } from '../../components/PageTitle'
 import { Timestamp } from '../../components/time/Timestamp'
 import { eventLogger } from '../../tracking/eventLogger'
+import { ErrorAlert } from '../../components/alerts'
+import * as H from 'history'
 
 /**
  * Fetches a repository's text search index information.
@@ -64,7 +66,7 @@ function fetchRepositoryTextSearchIndex(id: GQL.ID): Observable<GQL.IRepositoryT
     )
 }
 
-const TextSearchIndexedRef: React.FunctionComponent<{
+const TextSearchIndexedReference: React.FunctionComponent<{
     repo: GQL.IRepository
     indexedRef: GQL.IRepositoryTextSearchIndexedRef
 }> = ({ repo, indexedRef }) => {
@@ -93,11 +95,7 @@ const TextSearchIndexedRef: React.FunctionComponent<{
                     &nbsp;&mdash; indexed at{' '}
                     <code>
                         <LinkOrSpan
-                            to={
-                                indexedRef.indexedCommit && indexedRef.indexedCommit.commit
-                                    ? indexedRef.indexedCommit.commit.url
-                                    : repo.url
-                            }
+                            to={indexedRef.indexedCommit?.commit ? indexedRef.indexedCommit.commit.url : repo.url}
                         >
                             {indexedRef.indexedCommit!.abbreviatedOID}
                         </LinkOrSpan>
@@ -111,8 +109,9 @@ const TextSearchIndexedRef: React.FunctionComponent<{
     )
 }
 
-interface Props extends RouteComponentProps<any> {
+interface Props extends RouteComponentProps<{}> {
     repo: GQL.IRepository
+    history: H.History
 }
 
 interface State {
@@ -158,11 +157,11 @@ export class RepoSettingsIndexPage extends React.PureComponent<Props, State> {
                 <h2>Indexing</h2>
                 {this.state.loading && <LoadingSpinner className="icon-inline" />}
                 {this.state.error && (
-                    <div className="alert alert-danger">
-                        Error getting repository index status:
-                        <br />
-                        <code>{this.state.error.message}</code>
-                    </div>
+                    <ErrorAlert
+                        prefix="Error getting repository index status"
+                        error={this.state.error}
+                        history={this.props.history}
+                    />
                 )}
                 {!this.state.error &&
                     !this.state.loading &&
@@ -171,8 +170,12 @@ export class RepoSettingsIndexPage extends React.PureComponent<Props, State> {
                             <p>Index branches to enhance search performance at scale.</p>
                             {this.state.textSearchIndex.refs && (
                                 <ul className="repo-settings-index-page__refs">
-                                    {this.state.textSearchIndex.refs.map((ref, i) => (
-                                        <TextSearchIndexedRef key={i} repo={this.props.repo} indexedRef={ref} />
+                                    {this.state.textSearchIndex.refs.map((reference, index) => (
+                                        <TextSearchIndexedReference
+                                            key={index}
+                                            repo={this.props.repo}
+                                            indexedRef={reference}
+                                        />
                                     ))}
                                 </ul>
                             )}

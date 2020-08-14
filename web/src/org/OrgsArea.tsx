@@ -6,10 +6,12 @@ import * as GQL from '../../../shared/src/graphql/schema'
 import { PlatformContextProps } from '../../../shared/src/platform/context'
 import { SettingsCascadeProps } from '../../../shared/src/settings/settings'
 import { HeroPage } from '../components/HeroPage'
-import { ThemeProps } from '../theme'
+import { ThemeProps } from '../../../shared/src/theme'
 import { OrgArea, OrgAreaRoute } from './area/OrgArea'
 import { OrgAreaHeaderNavItem } from './area/OrgHeader'
 import { NewOrganizationPage } from './new/NewOrganizationPage'
+import { PatternTypeProps } from '../search'
+import { TelemetryProps } from '../../../shared/src/telemetry/telemetryService'
 
 const NotFoundPage: React.FunctionComponent = () => (
     <HeroPage
@@ -20,11 +22,13 @@ const NotFoundPage: React.FunctionComponent = () => (
 )
 
 interface Props
-    extends RouteComponentProps<any>,
+    extends RouteComponentProps<{}>,
         ExtensionsControllerProps,
         PlatformContextProps,
         SettingsCascadeProps,
-        ThemeProps {
+        ThemeProps,
+        TelemetryProps,
+        Omit<PatternTypeProps, 'setPatternType'> {
     orgAreaRoutes: readonly OrgAreaRoute[]
     orgAreaHeaderNavItems: readonly OrgAreaHeaderNavItem[]
 

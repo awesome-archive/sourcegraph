@@ -394,10 +394,15 @@ declare module 'sourcegraph' {
     export interface DocumentFilter {
         /** A language id, such as `typescript` or `*`. */
         language?: string
+
         /** A URI scheme, such as `file` or `untitled`. */
         scheme?: string
+
         /** A glob pattern, such as `*.{ts,js}`. */
         pattern?: string
+
+        /** A base URI (e.g. root URI of a workspace folder) that the document must be within. */
+        baseUri?: URL | string
     }
 
     /**
@@ -529,7 +534,7 @@ declare module 'sourcegraph' {
      * Each {@link ViewComponent} has a distinct {@link ViewComponent#type} value that indicates what kind of
      * component it is ({@link CodeEditor}, etc.).
      */
-    export type ViewComponent = CodeEditor
+    export type ViewComponent = CodeEditor | DirectoryViewer
 
     /**
      * A style for a {@link TextDocumentDecoration}.
@@ -616,6 +621,30 @@ declare module 'sourcegraph' {
         readonly key: string
     }
 
+    export interface Directory {
+        /**
+         * The URI of the directory.
+         *
+         * @todo The format of this URI will be changed in the future. It must not be relied on.
+         */
+        readonly uri: URL
+    }
+
+    /**
+     * A viewer for directories.
+     *
+     * This API is experimental and subject to change.
+     */
+    export interface DirectoryViewer {
+        readonly type: 'DirectoryViewer'
+
+        /**
+         * The directory shown in the directory viewer.
+         * This currently only exposes the URI of the directory.
+         */
+        readonly directory: Directory
+    }
+
     /**
      * A text editor for code files (as opposed to a rich text editor for documents or other kinds of file format
      * editors).
@@ -692,6 +721,205 @@ declare module 'sourcegraph' {
         component: { locationProvider: string } | null
     }
 
+    export type ChartContent = LineChartContent<any, string> | BarChartContent<any, string> | PieChartContent<any>
+
+    export interface ChartAxis<K extends keyof D, D extends object> {
+        /** The key in the data object. */
+        dataKey: K
+
+        /** The scale of the axis. */
+        scale?: 'time' | 'linear'
+
+        /** The type of the data key. */
+        type: 'number' | 'category'
+    }
+
+    export interface LineChartContent<D extends object, XK extends keyof D> {
+        chart: 'line'
+
+        /** An array of data objects, with one element for each step on the X axis. */
+        data: D[]
+
+        /** The series (lines) of the chart. */
+        series: {
+            /** The key in each data object for the values this line should be calculated from. */
+            dataKey: keyof D
+
+            /** The name of the line shown in the legend and tooltip. */
+            name?: string
+
+            /**
+             * The link URLs for each data point.
+             * A link URL should take the user to more details about the specific data point.
+             */
+            linkURLs?: string[]
+
+            /** The CSS color of the line. */
+            stroke?: string
+        }[]
+
+        xAxis: ChartAxis<XK, D>
+    }
+
+    export interface BarChartContent<D extends object, XK extends keyof D> {
+        chart: 'bar'
+
+        /** An array of data objects, with one element for each step on the X axis. */
+        data: D[]
+
+        /** The series of the chart. */
+        series: {
+            /** The key in each data object for the values this bar should be calculated from. */
+            dataKey: keyof D
+
+            /**
+             * An optional stack id of each bar.
+             * When two bars have the same same `stackId`, the two bars are stacked in order.
+             */
+            stackId?: string
+
+            /** The name of the series, shown in the legend. */
+            name?: string
+
+            /**
+             * The link URLs for each bar.
+             * A link URL should take the user to more details about the specific data point.
+             */
+            linkURLs?: string[]
+
+            /** The CSS fill color of the line. */
+            fill?: string
+        }[]
+
+        xAxis: ChartAxis<XK, D>
+    }
+
+    export interface PieChartContent<D extends object> {
+        chart: 'pie'
+
+        pies: {
+            /** The key of each sector's va lue. */
+            dataKey: keyof D
+
+            /** The key of each sector's name. */
+            nameKey: keyof D
+
+            /** The key of each sector's fill color. */
+            fillKey?: keyof D
+
+            /** An array of data objects, with one element for each pie sector. */
+            data: D[]
+
+            /** T he key of each sector's link URL. */
+            linkURLKey?: keyof D
+        }[]
+    }
+
+    /**
+     * A view is a page or partial page.
+     */
+    export interface View {
+        /** The title of the view. */
+        title: string
+
+        /** An optional subtitle displayed under the title. */
+        subtitle?: string
+
+        /**
+         * The content sections of the view. The sections are rendered in order.
+         *
+         * Support for non-MarkupContent elements is experimental and subject to change or removal
+         * without notice.
+         */
+        content: (
+            | MarkupContent
+            | ChartContent
+            | { component: string; props: { [name: string]: string | number | boolean | null | undefined } }
+        )[]
+    }
+
+    /**
+     * A view provider registered with {@link sourcegraph.app.registerViewProvider}.
+     */
+    export type ViewProvider =
+        | InsightsPageViewProvider
+        | HomepageViewProvider
+        | GlobalPageViewProvider
+        | DirectoryViewProvider
+
+    /**
+     * Experimental view provider shown on the dashboard on the insights page.
+     * This API is experimental and is subject to change or removal without notice.
+     */
+    export interface InsightsPageViewProvider {
+        readonly where: 'insightsPage'
+
+        /**
+         * Provide content for the view.
+         */
+        provideView(context: {}): ProviderResult<View>
+    }
+
+    /**
+     * Experimental view provider shown on the homepage (below the search box in the Sourcegraph web app).
+     * This API is experimental and is subject to change or removal without notice.
+     */
+    export interface HomepageViewProvider {
+        readonly where: 'homepage'
+
+        /**
+         * Provide content for the view.
+         */
+        provideView(context: {}): ProviderResult<View>
+    }
+
+    /**
+     * Experimental global view provider. Global view providers are shown on a dedicated page in the app.
+     * This API is experimental and is subject to change or removal without notice.
+     */
+    export interface GlobalPageViewProvider {
+        readonly where: 'global/page'
+
+        /**
+         * Provide content for the view.
+         *
+         * @param params Parameters from the page (such as URL query parameters). The schema of these parameters is
+         * experimental and subject to change without notice.
+         * @returns The view content.
+         */
+        provideView(context: { [param: string]: string }): ProviderResult<View>
+    }
+
+    /**
+     * Context passed to directory view providers.
+     *
+     * The schema of these parameters is experimental and subject to change without notice.
+     */
+    export interface DirectoryViewContext {
+        /** The directory viewer displaying the view. */
+        viewer: DirectoryViewer
+
+        /** The workspace of the directory. */
+        workspace: WorkspaceRoot
+    }
+
+    /**
+     * Experimental view provider for directory pages.
+     * This API is experimental and is subject to change or removal without notice.
+     */
+    export interface DirectoryViewProvider {
+        readonly where: 'directory'
+
+        /**
+         * Provide content for a view.
+         *
+         * @param context The context of the directory. The schema of these parameters is experimental and subject to
+         * change without notice.
+         * @returns The view content.
+         */
+        provideView(context: DirectoryViewContext): ProviderResult<View>
+    }
+
     /**
      * The client application that is running the extension.
      */
@@ -733,6 +961,17 @@ declare module 'sourcegraph' {
          * text editors using {@link setDecorations}.
          */
         export function createDecorationType(): TextDocumentDecorationType
+
+        /**
+         * Register a view provider, which provides the contents of a view.
+         *
+         * This API is experimental and is subject to change or removal without notice.
+         *
+         * @param id The ID of the view.
+         * @param provider A view provider.
+         * @returns An unsubscribable to unregister this provider.
+         */
+        export function registerViewProvider(id: string, provider: ViewProvider): Unsubscribable
     }
 
     /**
@@ -794,6 +1033,21 @@ declare module 'sourcegraph' {
          * An event that is fired when a workspace root is added or removed from the workspace.
          */
         export const rootChanges: Subscribable<void>
+
+        /**
+         * The current version context of the workspace, if any.
+         *
+         * A version context is a set of repositories and revisions on a Sourcegraph instance.
+         * when set, extensions use it to scope search queries, code intelligence actions, etc.
+         *
+         * See more information at http://docs.sourcegraph.com/user/search#version-contexts.
+         */
+        export const versionContext: string | undefined
+
+        /**
+         * An event that is fired when a workspace's version context changes.
+         */
+        export const versionContextChanges: Subscribable<string | undefined>
     }
 
     /**
@@ -830,6 +1084,16 @@ declare module 'sourcegraph' {
         readonly value: Readonly<C>
     }
 
+    interface ConfigurationService extends Subscribable<void> {
+        /**
+         * Returns the full configuration object.
+         *
+         * @template C The configuration schema.
+         * @returns The full configuration object.
+         */
+        get<C extends object = { [key: string]: any }>(): Configuration<C>
+    }
+
     /**
      * The configuration settings.
      *
@@ -845,25 +1109,7 @@ declare module 'sourcegraph' {
      * @todo Add a way to get/update configuration for a specific scope or subject.
      * @todo Support applying defaults to the configuration values.
      */
-    export namespace configuration {
-        /**
-         * Returns the full configuration object.
-         *
-         * @template C The configuration schema.
-         * @returns The full configuration object.
-         */
-        export function get<C extends object = { [key: string]: any }>(): Configuration<C>
-
-        /**
-         * Subscribe to changes to the configuration. The {@link next} callback is called when any configuration
-         * value changes (and synchronously immediately). Call {@link get} in the callback to obtain the new
-         * configuration values.
-         *
-         * @template C The configuration schema.
-         * @returns An unsubscribable to stop calling the callback for configuration changes.
-         */
-        export function subscribe(next: () => void): Unsubscribable
-    }
+    export const configuration: ConfigurationService
 
     /**
      * A provider result represents the values that a provider, such as the {@link HoverProvider}, may return. The
@@ -925,6 +1171,66 @@ declare module 'sourcegraph' {
     }
 
     /**
+     * A style for {@link BadgeAttachmentRenderOptions}.
+     */
+    export interface ThemableBadgeAttachmentStyle {
+        /**
+         * The icon (a base64-encoded image icon) to display next to the wrapped value.
+         *
+         * @deprecated Use {@link BadgeAttachmentRenderOptions#kind} to pick a predefined icon
+         */
+        icon?: string
+
+        /**
+         * The CSS background-color property value for the attachment.
+         *
+         * @deprecated Use {@link BadgeAttachmentRenderOptions#kind} to pick a predefined icon
+         */
+        backgroundColor?: string
+
+        /**
+         * The CSS color property value for the attachment.
+         *
+         * @deprecated Use {@link BadgeAttachmentRenderOptions#kind} to pick a predefined icon
+         */
+        color?: string
+    }
+
+    /** An attachment adds content to a hover tooltip or result in a locations panel. */
+    export interface BadgeAttachmentRenderOptions extends ThemableBadgeAttachmentStyle {
+        /** Predefined icons for badge attachments */
+        kind: 'info' | 'error' | 'warning'
+
+        /** Tooltip text to display when hovering over the attachment. */
+        hoverMessage?: string
+
+        /** If set, the attachment becomes a link with this destination URL. */
+        linkURL?: string
+
+        /**
+         * Overwrite style for light themes.
+         *
+         * @deprecated Use {@link BadgeAttachmentRenderOptions#kind} to pick a predefined icon
+         */
+        light?: ThemableBadgeAttachmentStyle
+
+        /**
+         * Overwrite style for dark themes.
+         *
+         * @deprecated Use {@link BadgeAttachmentRenderOptions#kind} to pick a predefined icon
+         */
+        dark?: ThemableBadgeAttachmentStyle
+    }
+
+    /**
+     * A wrapper around a providable type (currently hover and locations) with additional
+     * context to enable displaying badges next to the wrapped result value in the UI.
+     */
+    export type Badged<T extends object> = T & {
+        badge?: BadgeAttachmentRenderOptions
+    }
+
+    /**
      * A hover represents additional information for a symbol or word. Hovers are rendered in a tooltip-like
      * widget.
      */
@@ -934,25 +1240,44 @@ declare module 'sourcegraph' {
          */
         contents: MarkupContent
 
-        /** @deprecated */
-        __backcompatContents?: (MarkupContent | string | { language: string; value: string })[]
-
         /**
          * The range to which this hover applies. When missing, the editor will use the range at the current
          * position or the current position itself.
          */
         range?: Range
+
+        /**
+         * Alerts that should be shown in this hover.
+         */
+        alerts?: Badged<HoverAlert>[]
+    }
+
+    export interface HoverAlert {
+        /**
+         * Text content to be shown on hovers. Since the alert is displayed inline,
+         * multiparagraph content will be rendered on one line. It's recommended to
+         * provide a brief message here, and place futher details in the badge or
+         * provide a link.
+         */
+        summary: MarkupContent
+
+        /**
+         * When an alert has a dismissal type, dismissing it will prevent all alerts
+         * of that type from being shown. If no type is provided, the alert is not
+         * dismissible.
+         */
+        type?: string
     }
 
     export interface HoverProvider {
-        provideHover(document: TextDocument, position: Position): ProviderResult<Hover>
+        provideHover(document: TextDocument, position: Position): ProviderResult<Badged<Hover>>
     }
 
     /**
      * The definition of a symbol represented as one or many [locations](#Location). For most programming languages
      * there is only one location at which a symbol is defined. If no definition can be found `null` is returned.
      */
-    export type Definition = Location | Location[] | null
+    export type Definition = Badged<Location> | Badged<Location>[] | null
 
     /**
      * A definition provider implements the "go-to-definition" feature.
@@ -993,7 +1318,7 @@ declare module 'sourcegraph' {
             document: TextDocument,
             position: Position,
             context: ReferenceContext
-        ): ProviderResult<Location[]>
+        ): ProviderResult<Badged<Location>[]>
     }
 
     /**
@@ -1065,6 +1390,51 @@ declare module 'sourcegraph' {
          * The lack of a result can be signaled by returning `undefined`, `null`, or an empty array.
          */
         provideCompletionItems(document: TextDocument, position: Position): ProviderResult<CompletionList>
+    }
+
+    /**
+     * A document highlight is a range inside a text document which deserves special attention.
+     * Usually a document highlight is visualized by changing the background color of its range.
+     */
+    export interface DocumentHighlight {
+        /**
+         * The range this highlight applies to.
+         */
+        range: Range
+
+        /**
+         * The highlight kind, default is text.
+         */
+        kind?: DocumentHighlightKind
+    }
+
+    /**
+     * A document highlight kind.
+     */
+    export enum DocumentHighlightKind {
+        Text = 'text',
+        Read = 'read',
+        Write = 'write',
+    }
+
+    /**
+     * A document highlight provider provides ranges to highlight in the current document like all
+     * occurrences of a variable or all exit-points of a function.
+     *
+     * Providers are queried for document highlights on symbol hovers in any document matching
+     * the document selector specified at registration time.
+     */
+    export interface DocumentHighlightProvider {
+        /**
+         * Provide document highlights for the given position and document.
+         *
+         * @param document The document in which the command was invoked.
+         * @param position The position at which the command was invoked.
+         *
+         * @returns An array of document highlights, or a thenable that resolves to document highlights.
+         * The lack of a result can be signaled by returning `undefined`, `null`, or an empty array.
+         */
+        provideDocumentHighlights(document: TextDocument, position: Position): ProviderResult<DocumentHighlight[]>
     }
 
     export namespace languages {
@@ -1149,6 +1519,22 @@ declare module 'sourcegraph' {
             selector: DocumentSelector,
             provider: CompletionItemProvider
         ): Unsubscribable
+
+        /**
+         * Registers a document highlight provider.
+         *
+         * Multiple providers can be registered with overlapping document selectors. In that case,
+         * providers are queried in parallel and the results are merged. A failing provider will not
+         * cause the whole operation to fail.
+         *
+         * @param selector A selector that defines the documents this provider applies to.
+         * @param provider A document hover provider.
+         * @returns An unsubscribable to unregister this provider.
+         */
+        export function registerDocumentHighlightProvider(
+            selector: DocumentSelector,
+            provider: DocumentHighlightProvider
+        ): Unsubscribable
     }
 
     /**
@@ -1176,7 +1562,7 @@ declare module 'sourcegraph' {
          *
          * Multiple transformers can be registered. In that case, all transformations will be applied
          * and the result is a single query that has been altered by all transformers. The order in
-         * which transfomers are applied is not defined.
+         * which transforms are applied is not defined.
          *
          * @param provider A query transformer.
          */
@@ -1194,8 +1580,7 @@ declare module 'sourcegraph' {
          * {@link commands.executeCommand}).
          *
          * @param command A unique identifier for the command.
-         * @param callback A command function. If it returns a {@link Promise}, execution waits until it is
-         *                 resolved.
+         * @param callback A command function. If it returns a {@link Promise}, execution waits until it is resolved.
          * @returns Unsubscribable to unregister this command.
          * @throws Registering a command with an existing command identifier throws an error.
          */
@@ -1208,7 +1593,7 @@ declare module 'sourcegraph' {
          * @param command Identifier of the command to execute.
          * @param rest Parameters passed to the command function.
          * @returns A {@link Promise} that resolves to the result of the given command.
-         * @throws If no command exists wih the given command identifier, an error is thrown.
+         * @throws If no command exists with the given command identifier, an error is thrown.
          */
         export function executeCommand<T = any>(command: string, ...args: any[]): Promise<T>
     }

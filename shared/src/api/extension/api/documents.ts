@@ -1,19 +1,27 @@
-import { ProxyValue, proxyValueSymbol } from '@sourcegraph/comlink'
+import { ProxyMarked, proxyMarker } from 'comlink'
 import { Subject } from 'rxjs'
 import { TextDocument } from 'sourcegraph'
-import { TextModel } from '../../client/services/modelService'
-import { ExtDocument } from './textDocument'
+import { TextModelUpdate } from '../../client/services/modelService'
+import { ExtensionDocument } from './textDocument'
 
 /** @internal */
-export interface ExtDocumentsAPI extends ProxyValue {
-    $acceptDocumentData(models: readonly TextModel[]): void
+export interface ExtDocumentsAPI extends ProxyMarked {
+    $acceptDocumentData(modelUpdates: readonly TextModelUpdate[]): void
+}
+
+const DOCUMENT_NOT_FOUND_ERROR_NAME = 'DocumentNotFoundError'
+class DocumentNotFoundError extends Error {
+    public readonly name = DOCUMENT_NOT_FOUND_ERROR_NAME
+    constructor(resource: string) {
+        super(`document not found: ${resource}`)
+    }
 }
 
 /** @internal */
-export class ExtDocuments implements ExtDocumentsAPI, ProxyValue {
-    public readonly [proxyValueSymbol] = true
+export class ExtensionDocuments implements ExtDocumentsAPI, ProxyMarked {
+    public readonly [proxyMarker] = true
 
-    private documents = new Map<string, ExtDocument>()
+    private documents = new Map<string, ExtensionDocument>()
 
     constructor(private sync: () => Promise<void>) {}
 
@@ -22,12 +30,12 @@ export class ExtDocuments implements ExtDocumentsAPI, ProxyValue {
      *
      * @internal
      */
-    public get(resource: string): ExtDocument {
-        const doc = this.documents.get(resource)
-        if (!doc) {
-            throw new Error(`document not found: ${resource}`)
+    public get(resource: string): ExtensionDocument {
+        const textDocument = this.documents.get(resource)
+        if (!textDocument) {
+            throw new DocumentNotFoundError(resource)
         }
-        return doc
+        return textDocument
     }
 
     /**
@@ -36,11 +44,13 @@ export class ExtDocuments implements ExtDocumentsAPI, ProxyValue {
      *
      * @todo This is necessary because hovers can be sent before the document is loaded, and it will cause a
      * "document not found" error.
+     *
+     * @deprecated `getSync()` makes no additional guarantees over `get()` anymore.
      */
-    public async getSync(resource: string): Promise<ExtDocument> {
-        const doc = this.documents.get(resource)
-        if (doc) {
-            return doc
+    public async getSync(resource: string): Promise<ExtensionDocument> {
+        const textDocument = this.documents.get(resource)
+        if (textDocument) {
+            return textDocument
         }
         await this.sync()
         return this.get(resource)
@@ -51,19 +61,30 @@ export class ExtDocuments implements ExtDocumentsAPI, ProxyValue {
      *
      * @internal
      */
-    public getAll(): ExtDocument[] {
-        return Array.from(this.documents.values())
+    public getAll(): ExtensionDocument[] {
+        return [...this.documents.values()]
     }
 
     public openedTextDocuments = new Subject<TextDocument>()
 
-    public $acceptDocumentData(models: readonly TextModel[]): void {
-        for (const model of models) {
-            const isNew = !this.documents.has(model.uri)
-            const doc = new ExtDocument(model)
-            this.documents.set(model.uri, doc)
-            if (isNew) {
-                this.openedTextDocuments.next(doc)
+    public $acceptDocumentData(modelUpdates: readonly TextModelUpdate[]): void {
+        for (const update of modelUpdates) {
+            switch (update.type) {
+                case 'added': {
+                    const { uri, languageId, text } = update
+                    const textDocument = new ExtensionDocument({ uri, languageId, text })
+                    this.documents.set(update.uri, textDocument)
+                    this.openedTextDocuments.next(textDocument)
+                    break
+                }
+                case 'updated': {
+                    const textDocument = this.get(update.uri)
+                    textDocument.update(update)
+                    break
+                }
+                case 'deleted':
+                    this.documents.delete(update.uri)
+                    break
             }
         }
     }

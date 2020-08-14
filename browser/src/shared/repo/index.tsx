@@ -1,29 +1,13 @@
+import { RepoSpec, RevisionSpec } from '../../../../shared/src/util/url'
+
 export interface DiffResolvedRevSpec {
     baseCommitID: string
     headCommitID: string
 }
 
-export interface OpenInSourcegraphProps {
+export interface OpenInSourcegraphProps extends RepoSpec, RevisionSpec {
     sourcegraphURL: string
-    repoName: string
-    rev: string
-    filePath?: string
-    commit?: {
-        baseRev: string
-        headRev: string
-    }
-    coords?: {
-        line: number
-        char: number
-    }
-    fragment?: 'references'
-    query?: {
-        search?: string
-        diff?: {
-            rev: string
-        }
-    }
-    withModifierKey?: boolean
+    filePath: string
 }
 
 export interface OpenDiffInSourcegraphProps
@@ -32,10 +16,4 @@ export interface OpenDiffInSourcegraphProps
         baseRev: string
         headRev: string
     }
-}
-
-export interface MaybeDiffSpec {
-    isDelta: boolean
-    isSplitDiff?: boolean
-    isBase?: boolean
 }

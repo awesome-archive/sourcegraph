@@ -5,6 +5,7 @@ import { Omit } from 'utility-types'
 import * as GQL from '../../../shared/src/graphql/schema'
 import { Form } from '../components/Form'
 import { NamespaceProps } from '../namespaces'
+import { ErrorAlert } from '../components/alerts'
 
 export interface SavedQueryFields {
     id: GQL.ID
@@ -66,7 +67,7 @@ export class SavedSearchForm extends React.Component<Props, State> {
         }
     }
 
-    private handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    private handleSubmit = (event: React.FormEvent<HTMLFormElement>): void => {
         event.preventDefault()
         this.props.onSubmit(this.state.values)
     }
@@ -88,7 +89,7 @@ export class SavedSearchForm extends React.Component<Props, State> {
                         <input
                             type="text"
                             name="description"
-                            className="form-control"
+                            className="form-control test-saved-search-form-input-description"
                             placeholder="Description"
                             required={true}
                             value={description}
@@ -100,7 +101,7 @@ export class SavedSearchForm extends React.Component<Props, State> {
                         <input
                             type="text"
                             name="query"
-                            className="form-control"
+                            className="form-control test-saved-search-form-input-query"
                             placeholder="Query"
                             required={true}
                             value={query}
@@ -156,7 +157,7 @@ export class SavedSearchForm extends React.Component<Props, State> {
                         <div className="alert alert-warning mb-3">
                             <strong>Warning:</strong> Sending emails is not currently configured on this Sourcegraph
                             server.{' '}
-                            {this.props.authenticatedUser && this.props.authenticatedUser.siteAdmin
+                            {this.props.authenticatedUser?.siteAdmin
                                 ? 'Use the email.smtp site configuration setting to enable sending emails.'
                                 : 'Contact your server admin for more information.'}
                         </div>
@@ -164,14 +165,12 @@ export class SavedSearchForm extends React.Component<Props, State> {
                     <button
                         type="submit"
                         disabled={this.props.loading}
-                        className="btn btn-primary saved-search-form__submit-button"
+                        className="btn btn-primary saved-search-form__submit-button test-saved-search-form-submit-button"
                     >
                         {this.props.submitLabel}
                     </button>
                     {this.props.error && !this.props.loading && (
-                        <div className="alert alert-danger mb-3">
-                            <strong>Error:</strong> {this.props.error.message}
-                        </div>
+                        <ErrorAlert className="mb-3" error={this.props.error} history={this.props.history} />
                     )}
                 </Form>
             </div>
@@ -180,8 +179,8 @@ export class SavedSearchForm extends React.Component<Props, State> {
     /**
      * Tells if the query is unsupported for sending notifications.
      */
-    private isUnsupportedNotifyQuery(v: Omit<SavedQueryFields, 'id'>): boolean {
-        const notifying = v.notify || v.notifySlack
-        return notifying && !v.query.includes('type:diff') && !v.query.includes('type:commit')
+    private isUnsupportedNotifyQuery(savedQuery: Omit<SavedQueryFields, 'id'>): boolean {
+        const notifying = savedQuery.notify || savedQuery.notifySlack
+        return notifying && !savedQuery.query.includes('type:diff') && !savedQuery.query.includes('type:commit')
     }
 }

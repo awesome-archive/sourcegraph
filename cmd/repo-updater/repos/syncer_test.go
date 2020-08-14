@@ -10,15 +10,17 @@ import (
 
 	"github.com/gitchander/permutation"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/pkg/errors"
 	"github.com/sourcegraph/sourcegraph/cmd/repo-updater/repos"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/awscodecommit"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/bitbucketcloud"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/bitbucketserver"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/github"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/gitlab"
-	"github.com/sourcegraph/sourcegraph/pkg/extsvc/gitolite"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/awscodecommit"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/bitbucketcloud"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/bitbucketserver"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/github"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/gitlab"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc/gitolite"
 )
 
 func TestSyncer_Sync(t *testing.T) {
@@ -26,8 +28,8 @@ func TestSyncer_Sync(t *testing.T) {
 
 	testSyncerSync(new(repos.FakeStore))(t)
 
-	github := repos.ExternalService{ID: 1, Kind: "github"}
-	gitlab := repos.ExternalService{ID: 2, Kind: "gitlab"}
+	github := repos.ExternalService{ID: 1, Kind: extsvc.KindGitHub}
+	gitlab := repos.ExternalService{ID: 2, Kind: extsvc.KindGitLab}
 
 	for _, tc := range []struct {
 		name    string
@@ -39,7 +41,7 @@ func TestSyncer_Sync(t *testing.T) {
 			name:    "sourcer error aborts sync",
 			sourcer: repos.NewFakeSourcer(errors.New("boom")),
 			store:   new(repos.FakeStore),
-			err:     "syncer.sync.sourced: boom",
+			err:     "syncer.sync.sourced: 1 error occurred:\n\t* boom\n\n",
 		},
 		{
 			name: "sources partial errors aborts sync",
@@ -69,11 +71,19 @@ func TestSyncer_Sync(t *testing.T) {
 			now := clock.Now
 			ctx := context.Background()
 
-			syncer := repos.NewSyncer(tc.store, tc.sourcer, nil, now)
-			_, err := syncer.Sync(ctx)
+			syncer := &repos.Syncer{
+				Store:   tc.store,
+				Sourcer: tc.sourcer,
+				Now:     now,
+			}
+			err := syncer.Sync(ctx)
 
 			if have, want := fmt.Sprint(err), tc.err; have != want {
 				t.Errorf("have error %q, want %q", have, want)
+			}
+
+			if have, want := fmt.Sprint(syncer.LastSyncError()), tc.err; have != want {
+				t.Errorf("have LastSyncError %q, want %q", have, want)
 			}
 		})
 	}
@@ -82,17 +92,16 @@ func TestSyncer_Sync(t *testing.T) {
 func testSyncerSync(s repos.Store) func(*testing.T) {
 	githubService := &repos.ExternalService{
 		ID:   1,
-		Kind: "GITHUB",
+		Kind: extsvc.KindGitHub,
 	}
 
 	githubRepo := (&repos.Repo{
 		Name:     "github.com/org/foo",
 		Metadata: &github.Repository{},
-		Enabled:  true,
 		ExternalRepo: api.ExternalRepoSpec{
 			ID:          "foo-external-12345",
 			ServiceID:   "https://github.com/",
-			ServiceType: "github",
+			ServiceType: extsvc.TypeGitHub,
 		},
 	}).With(
 		repos.Opt.RepoSources(githubService.URN()),
@@ -100,17 +109,16 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 
 	gitlabService := &repos.ExternalService{
 		ID:   10,
-		Kind: "GITLAB",
+		Kind: extsvc.KindGitLab,
 	}
 
 	gitlabRepo := (&repos.Repo{
 		Name:     "gitlab.com/org/foo",
 		Metadata: &gitlab.Project{},
-		Enabled:  true,
 		ExternalRepo: api.ExternalRepoSpec{
 			ID:          "12345",
 			ServiceID:   "https://gitlab.com/",
-			ServiceType: "gitlab",
+			ServiceType: extsvc.TypeGitLab,
 		},
 	}).With(
 		repos.Opt.RepoSources(gitlabService.URN()),
@@ -118,13 +126,12 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 
 	bitbucketServerService := &repos.ExternalService{
 		ID:   20,
-		Kind: "BITBUCKETSERVER",
+		Kind: extsvc.KindBitbucketServer,
 	}
 
 	bitbucketServerRepo := (&repos.Repo{
 		Name:     "bitbucketserver.mycorp.com/org/foo",
 		Metadata: &bitbucketserver.Repo{},
-		Enabled:  true,
 		ExternalRepo: api.ExternalRepoSpec{
 			ID:          "23456",
 			ServiceID:   "https://bitbucketserver.mycorp.com/",
@@ -136,17 +143,16 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 
 	awsCodeCommitService := &repos.ExternalService{
 		ID:   30,
-		Kind: "AWSCODECOMMIT",
+		Kind: extsvc.KindAWSCodeCommit,
 	}
 
 	awsCodeCommitRepo := (&repos.Repo{
 		Name:     "git-codecommit.us-west-1.amazonaws.com/stripe-go",
 		Metadata: &awscodecommit.Repository{},
-		Enabled:  true,
 		ExternalRepo: api.ExternalRepoSpec{
 			ID:          "f001337a-3450-46fd-b7d2-650c0EXAMPLE",
 			ServiceID:   "arn:aws:codecommit:us-west-1:999999999999:",
-			ServiceType: "awscodecommit",
+			ServiceType: extsvc.TypeAWSCodeCommit,
 		},
 	}).With(
 		repos.Opt.RepoSources(awsCodeCommitService.URN()),
@@ -154,16 +160,15 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 
 	otherService := &repos.ExternalService{
 		ID:   40,
-		Kind: "OTHER",
+		Kind: extsvc.KindOther,
 	}
 
 	otherRepo := (&repos.Repo{
-		Name:    "git-host.com/org/foo",
-		Enabled: true,
+		Name: "git-host.com/org/foo",
 		ExternalRepo: api.ExternalRepoSpec{
 			ID:          "git-host.com/org/foo",
 			ServiceID:   "https://git-host.com/",
-			ServiceType: "other",
+			ServiceType: extsvc.TypeOther,
 		},
 	}).With(
 		repos.Opt.RepoSources(otherService.URN()),
@@ -171,17 +176,16 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 
 	gitoliteService := &repos.ExternalService{
 		ID:   50,
-		Kind: "GITOLITE",
+		Kind: extsvc.KindGitolite,
 	}
 
 	gitoliteRepo := (&repos.Repo{
 		Name:     "gitolite.mycorp.com/foo",
 		Metadata: &gitolite.Repo{},
-		Enabled:  true,
 		ExternalRepo: api.ExternalRepoSpec{
 			ID:          "foo",
 			ServiceID:   "git@gitolite.mycorp.com",
-			ServiceType: "gitolite",
+			ServiceType: extsvc.TypeGitolite,
 		},
 	}).With(
 		repos.Opt.RepoSources(gitoliteService.URN()),
@@ -189,17 +193,16 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 
 	bitbucketCloudService := &repos.ExternalService{
 		ID:   60,
-		Kind: "BITBUCKETCLOUD",
+		Kind: extsvc.KindBitbucketCloud,
 	}
 
 	bitbucketCloudRepo := (&repos.Repo{
 		Name:     "bitbucket.org/team/foo",
 		Metadata: &bitbucketcloud.Repo{},
-		Enabled:  true,
 		ExternalRepo: api.ExternalRepoSpec{
 			ID:          "{e164a64c-bd73-4a40-b447-d71b43f328a8}",
 			ServiceID:   "https://bitbucket.org/",
-			ServiceType: "bitbucketCloud",
+			ServiceType: extsvc.TypeBitbucketCloud,
 		},
 	}).With(
 		repos.Opt.RepoSources(bitbucketCloudService.URN()),
@@ -248,19 +251,6 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 				err: "<nil>",
 			},
 			testCase{
-				name:    "had name and got external_id",
-				sourcer: repos.NewFakeSourcer(nil, repos.NewFakeSource(tc.svc.Clone(), nil, tc.repo.Clone())),
-				store:   s,
-				stored: repos.Repos{tc.repo.With(func(r *repos.Repo) {
-					r.ExternalRepo.ID = ""
-				})},
-				now: clock.Now,
-				diff: repos.Diff{Modified: repos.Repos{
-					tc.repo.With(repos.Opt.RepoModifiedAt(clock.Time(1))),
-				}},
-				err: "<nil>",
-			},
-			testCase{
 				name: "new repo sources",
 				sourcer: repos.NewFakeSourcer(nil,
 					repos.NewFakeSource(tc.svc.Clone(), nil, tc.repo.Clone()),
@@ -272,30 +262,6 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 				diff: repos.Diff{Modified: repos.Repos{tc.repo.With(
 					repos.Opt.RepoModifiedAt(clock.Time(1)),
 					repos.Opt.RepoSources(tc.svc.URN(), svcdup.URN()),
-				)}},
-				err: "<nil>",
-			},
-			testCase{
-				name: "enabled field is not updateable",
-				sourcer: repos.NewFakeSourcer(nil, repos.NewFakeSource(tc.svc.Clone(), nil, tc.repo.With(func(r *repos.Repo) {
-					r.Enabled = !r.Enabled
-				}))),
-				store:  s,
-				stored: repos.Repos{tc.repo.Clone()},
-				now:    clock.Now,
-				diff:   repos.Diff{Unmodified: repos.Repos{tc.repo.Clone()}},
-				err:    "<nil>",
-			},
-			testCase{
-				name: "enabled field of a undeleted repo is not updateable",
-				sourcer: repos.NewFakeSourcer(nil, repos.NewFakeSource(tc.svc.Clone(), nil, tc.repo.With(func(r *repos.Repo) {
-					r.Enabled = !r.Enabled
-				}))),
-				store:  s,
-				stored: repos.Repos{tc.repo.With(repos.Opt.RepoDeletedAt(clock.Time(0)))},
-				now:    clock.Now,
-				diff: repos.Diff{Added: repos.Repos{tc.repo.With(
-					repos.Opt.RepoCreatedAt(clock.Time(1)),
 				)}},
 				err: "<nil>",
 			},
@@ -324,7 +290,6 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 				now: clock.Now,
 				diff: repos.Diff{Deleted: repos.Repos{tc.repo.With(
 					repos.Opt.RepoDeletedAt(clock.Time(1)),
-					repos.Opt.RepoEnabled(true),
 				)}},
 				err: "<nil>",
 			},
@@ -361,7 +326,6 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 				diff: repos.Diff{
 					Deleted: repos.Repos{
 						tc.repo.With(func(r *repos.Repo) {
-							r.Enabled = true
 							r.Sources = map[string]*repos.SourceInfo{}
 							r.DeletedAt = clock.Time(0)
 							r.UpdatedAt = clock.Time(0)
@@ -415,8 +379,8 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 				),
 				store: s,
 				stored: repos.Repos{
-					tc.repo.With(repos.Opt.RepoName("old-name")), // same external id as sourced
-					tc.repo.With(repos.Opt.RepoExternalID("")),   // same name as sourced
+					tc.repo.With(repos.Opt.RepoName("old-name")),  // same external id as sourced
+					tc.repo.With(repos.Opt.RepoExternalID("bar")), // same name as sourced
 				}.With(repos.Opt.RepoCreatedAt(clock.Time(1))),
 				now: clock.Now,
 				diff: repos.Diff{
@@ -508,21 +472,25 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 			},
 			func() testCase {
 				var update interface{}
-				switch strings.ToLower(tc.repo.ExternalRepo.ServiceType) {
-				case "github":
+				typ, ok := extsvc.ParseServiceType(tc.repo.ExternalRepo.ServiceType)
+				if !ok {
+					panic(fmt.Sprintf("test must be extended with new external service kind: %q", strings.ToLower(tc.repo.ExternalRepo.ServiceType)))
+				}
+				switch typ {
+				case extsvc.TypeGitHub:
 					update = &github.Repository{IsArchived: true}
-				case "gitlab":
+				case extsvc.TypeGitLab:
 					update = &gitlab.Project{Archived: true}
-				case "bitbucketserver":
+				case extsvc.TypeBitbucketServer:
 					update = &bitbucketserver.Repo{Public: true}
-				case "bitbucketcloud":
+				case extsvc.TypeBitbucketCloud:
 					update = &bitbucketcloud.Repo{IsPrivate: true}
-				case "awscodecommit":
+				case extsvc.TypeAWSCodeCommit:
 					update = &awscodecommit.Repository{Description: "new description"}
-				case "other", "gitolite":
+				case extsvc.TypeOther, extsvc.TypeGitolite:
 					return testCase{}
 				default:
-					panic("test must be extended with new external service kind")
+					panic(fmt.Sprintf("test must be extended with new external service kind: %q", strings.ToLower(tc.repo.ExternalRepo.ServiceType)))
 				}
 
 				return testCase{
@@ -580,8 +548,12 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 					}
 				}
 
-				syncer := repos.NewSyncer(st, tc.sourcer, nil, now)
-				diff, err := syncer.Sync(ctx)
+				syncer := &repos.Syncer{
+					Store:   st,
+					Sourcer: tc.sourcer,
+					Now:     now,
+				}
+				err := syncer.Sync(ctx)
 
 				if have, want := fmt.Sprint(err), tc.err; have != want {
 					t.Errorf("have error %q, want %q", have, want)
@@ -591,25 +563,16 @@ func testSyncerSync(s repos.Store) func(*testing.T) {
 					return
 				}
 
-				for _, d := range []struct {
-					name       string
-					have, want repos.Repos
-				}{
-					{"added", diff.Added, tc.diff.Added},
-					{"deleted", diff.Deleted, tc.diff.Deleted},
-					{"modified", diff.Modified, tc.diff.Modified},
-					{"unmodified", diff.Unmodified, tc.diff.Unmodified},
-				} {
-					t.Logf("diff.%s", d.name)
-					repos.Assert.ReposEqual(d.want...)(t, d.have)
-				}
-
 				if st != nil {
-					var want repos.Repos
-					want.Concat(diff.Added, diff.Modified, diff.Unmodified)
-					sort.Sort(want)
+					var want, have repos.Repos
+					want.Concat(tc.diff.Added, tc.diff.Modified, tc.diff.Unmodified)
+					have, _ = st.ListRepos(ctx, repos.StoreListReposArgs{})
 
-					have, _ := st.ListRepos(ctx, repos.StoreListReposArgs{})
+					want = want.With(repos.Opt.RepoID(0))
+					have = have.With(repos.Opt.RepoID(0))
+					sort.Sort(want)
+					sort.Sort(have)
+
 					repos.Assert.ReposEqual(want...)(t, have)
 				}
 			}))
@@ -631,12 +594,11 @@ func testSyncSubset(s repos.Store) func(*testing.T) {
 		Name:        "github.com/foo/bar",
 		Description: "The description",
 		Language:    "barlang",
-		Enabled:     true,
 		Archived:    false,
 		Fork:        false,
 		ExternalRepo: api.ExternalRepoSpec{
 			ID:          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
-			ServiceType: "github",
+			ServiceType: extsvc.TypeGitHub,
 			ServiceID:   "https://github.com/",
 		},
 		Sources: map[string]*repos.SourceInfo{
@@ -731,8 +693,11 @@ func testSyncSubset(s repos.Store) func(*testing.T) {
 				}
 
 				clock := clock
-				syncer := repos.NewSyncer(st, nil, nil, clock.Now)
-				_, err := syncer.SyncSubset(ctx, tc.sourced.Clone()...)
+				syncer := &repos.Syncer{
+					Store: st,
+					Now:   clock.Now,
+				}
+				err := syncer.SyncSubset(ctx, tc.sourced.Clone()...)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -833,35 +798,6 @@ func TestDiff(t *testing.T) {
 			diff: repos.Diff{Modified: repos.Repos{
 				{Name: "2", ExternalRepo: eid("1"), Description: "foo"},
 			}},
-		},
-		{
-			name: "duplicate with added external id is merged correctly",
-			store: repos.Repos{
-				{Name: "1", Description: "foo"},
-			},
-			source: repos.Repos{
-				{Name: "1", ExternalRepo: eid("1"), Description: "foo"},
-			},
-			diff: repos.Diff{Modified: repos.Repos{
-				{Name: "1", ExternalRepo: eid("1"), Description: "foo"},
-			}},
-		},
-		{
-			name: "no duplicate with added external id and changed name",
-			store: repos.Repos{
-				{Name: "1", Description: "foo"},
-			},
-			source: repos.Repos{
-				{Name: "2", ExternalRepo: eid("1"), Description: "foo"},
-			},
-			diff: repos.Diff{
-				Deleted: repos.Repos{
-					{Name: "1", Description: "foo"},
-				},
-				Added: repos.Repos{
-					{Name: "2", ExternalRepo: eid("1"), Description: "foo"},
-				},
-			},
 		},
 		{
 			name: "unmodified preserves stored repo",
@@ -965,21 +901,6 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name: "conflict on case insensitive name no external",
-			store: repos.Repos{
-				{Name: "fOO"},
-			},
-			source: repos.Repos{
-				{Name: "fOO", ExternalRepo: eid("fOO")},
-				{Name: "Foo", ExternalRepo: eid("Foo")},
-			},
-			diff: repos.Diff{
-				Modified: repos.Repos{
-					{Name: "Foo", ExternalRepo: eid("Foo")},
-				},
-			},
-		},
-		{
 			name: "conflict on case insensitive name exists 1",
 			store: repos.Repos{
 				{Name: "foo", ExternalRepo: eid("1")},
@@ -1012,47 +933,18 @@ func TestDiff(t *testing.T) {
 				},
 			},
 		},
+		// 🚨 SECURITY: Tests to ensure we detect repository visibility changes.
 		{
-			name: "associate by name",
+			name: "repository visiblity changed",
 			store: repos.Repos{
-				{Name: "foo"},
-				{Name: "baz"},
+				{Name: "foo", ExternalRepo: eid("1"), Description: "foo", Private: false},
 			},
 			source: repos.Repos{
-				{Name: "foo", ExternalRepo: eid("1")},
-				{Name: "bar", ExternalRepo: eid("2")},
+				{Name: "foo", ExternalRepo: eid("1"), Description: "foo", Private: true},
 			},
 			diff: repos.Diff{
-				Added: repos.Repos{
-					{Name: "bar", ExternalRepo: eid("2")},
-				},
 				Modified: repos.Repos{
-					{Name: "foo", ExternalRepo: eid("1")},
-				},
-				Deleted: repos.Repos{
-					{Name: "baz"},
-				},
-			},
-		},
-		{
-			name: "associate by name conflict",
-			store: repos.Repos{
-				{Name: "foo"},
-				{Name: "bar", ExternalRepo: eid("1")},
-			},
-			source: repos.Repos{
-				{Name: "foo", ExternalRepo: eid("1")},
-				{Name: "bar", ExternalRepo: eid("2")},
-			},
-			diff: repos.Diff{
-				Added: repos.Repos{
-					{Name: "bar", ExternalRepo: eid("2")},
-				},
-				Modified: repos.Repos{
-					{Name: "foo", ExternalRepo: eid("1")},
-				},
-				Deleted: repos.Repos{
-					{Name: "foo"},
+					{Name: "foo", ExternalRepo: eid("1"), Description: "foo", Private: true},
 				},
 			},
 		},
@@ -1087,4 +979,78 @@ func TestDiff(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSync_Run(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// some ceremony to setup metadata on our test repos
+	svc := &repos.ExternalService{ID: 1, Kind: extsvc.KindGitHub}
+	mk := func(name string) *repos.Repo {
+		return &repos.Repo{
+			Name:     name,
+			Metadata: &github.Repository{},
+			ExternalRepo: api.ExternalRepoSpec{
+				ID:          name,
+				ServiceID:   "https://github.com",
+				ServiceType: svc.Kind,
+			},
+		}
+	}
+
+	// Our test will have 1 initial repo, and discover a new repo on sourcing.
+	stored := repos.Repos{mk("initial")}.With(repos.Opt.RepoSources(svc.URN()))
+	sourced := repos.Repos{mk("initial"), mk("new")}
+
+	syncer := &repos.Syncer{
+		Store:        &repos.FakeStore{},
+		Sourcer:      repos.NewFakeSourcer(nil, repos.NewFakeSource(svc, nil, sourced...)),
+		Synced:       make(chan repos.Diff),
+		SubsetSynced: make(chan repos.Diff),
+		Now:          time.Now,
+	}
+
+	// Initial repos in store
+	syncer.Store.UpsertRepos(ctx, stored...)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		syncer.Run(ctx, func() time.Duration { return 0 })
+	}()
+
+	// Ignore fields store adds
+	ignore := cmpopts.IgnoreFields(repos.Repo{}, "ID", "CreatedAt", "UpdatedAt", "Sources")
+
+	// The first thing sent down Synced is the list of repos in store.
+	diff := <-syncer.Synced
+	if d := cmp.Diff(repos.Diff{Unmodified: stored}, diff, ignore); d != "" {
+		t.Fatalf("initial Synced mismatch (-want +got):\n%s", d)
+	}
+
+	// Next up it should find the new repo and send it down SubsetSynced
+	diff = <-syncer.SubsetSynced
+	if d := cmp.Diff(repos.Diff{Added: repos.Repos{mk("new")}}, diff, ignore); d != "" {
+		t.Fatalf("SubsetSynced mismatch (-want +got):\n%s", d)
+	}
+
+	// Finally we get the final diff, which will have everything listed as
+	// Unmodified since we added when we did SubsetSynced.
+	diff = <-syncer.Synced
+	if d := cmp.Diff(repos.Diff{Unmodified: sourced}, diff, ignore); d != "" {
+		t.Fatalf("final Synced mismatch (-want +got):\n%s", d)
+	}
+
+	// We check synced again to test us going around the Run loop 2 times in
+	// total.
+	diff = <-syncer.Synced
+	if d := cmp.Diff(repos.Diff{Unmodified: sourced}, diff, ignore); d != "" {
+		t.Fatalf("second final Synced mismatch (-want +got):\n%s", d)
+	}
+
+	// Cancel context and the run loop should stop
+	cancel()
+	<-done
 }

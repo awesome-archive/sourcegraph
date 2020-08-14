@@ -5,6 +5,7 @@ import { lazyComponent } from '../../util/lazyComponent'
 import { UserAreaRoute } from './UserArea'
 
 const UserSettingsArea = lazyComponent(() => import('../settings/UserSettingsArea'), 'UserSettingsArea')
+const UserEventLogsPage = lazyComponent(() => import('../UserEventLogsPage'), 'UserEventLogsPage')
 
 export const userAreaRoutes: readonly UserAreaRoute[] = [
     {
@@ -19,7 +20,6 @@ export const userAreaRoutes: readonly UserAreaRoute[] = [
                 {...props}
                 routes={props.userSettingsAreaRoutes}
                 sideBarItems={props.userSettingsSideBarItems}
-                isLightTheme={props.isLightTheme}
             />
         ),
     },
@@ -29,5 +29,9 @@ export const userAreaRoutes: readonly UserAreaRoute[] = [
     {
         path: '/account',
         render: props => <Redirect to={`${props.url}/settings/profile`} />,
+    },
+    {
+        path: '/event-log',
+        render: props => <UserEventLogsPage {...props} />,
     },
 ]

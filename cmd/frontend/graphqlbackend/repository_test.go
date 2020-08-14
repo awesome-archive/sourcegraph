@@ -7,12 +7,12 @@ import (
 	"testing"
 
 	"github.com/graph-gophers/graphql-go/gqltesting"
-
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/vcs/git"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/vcs/git"
 )
 
 const exampleCommitSHA1 = "1234567890123456789012345678901234567890"
@@ -30,7 +30,7 @@ func TestRepository_Commit(t *testing.T) {
 
 	gqltesting.RunTests(t, []*gqltesting.Test{
 		{
-			Schema: GraphQLSchema,
+			Schema: mustParseGraphQLSchema(t),
 			Query: `
 				{
 					repository(name: "github.com/gorilla/mux") {
@@ -63,7 +63,7 @@ func TestRepositoryHydration(t *testing.T) {
 			Name: api.RepoName(name),
 			ExternalRepo: api.ExternalRepoSpec{
 				ID:          name,
-				ServiceType: "github",
+				ServiceType: extsvc.TypeGitHub,
 				ServiceID:   "https://github.com",
 			},
 		}

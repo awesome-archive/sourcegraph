@@ -1,6 +1,6 @@
 import signale from 'signale'
 import webpack from 'webpack'
-import config from '../config/webpack/prod.config'
+import config from '../config/webpack/production.config'
 import * as tasks from './tasks'
 
 const buildChrome = tasks.buildChrome('prod')
@@ -12,13 +12,12 @@ const compiler = webpack(config)
 
 signale.await('Webpack compilation')
 
-compiler.run((err, stats) => {
+compiler.run((error, stats) => {
     console.log(stats.toString(tasks.WEBPACK_STATS_OPTIONS))
 
     if (stats.hasErrors()) {
         signale.error('Webpack compilation error')
         process.exit(1)
-        return
     }
     signale.success('Webpack compilation done')
 

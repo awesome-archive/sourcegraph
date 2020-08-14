@@ -1,11 +1,16 @@
 import * as React from 'react'
 import { RouteComponentProps } from 'react-router'
 import { overwriteSettings } from '../../../shared/src/settings/edit'
-import { ThemeProps } from '../theme'
+import { ThemeProps } from '../../../shared/src/theme'
 import { SettingsAreaPageProps } from './SettingsArea'
 import { SettingsFile } from './SettingsFile'
+import { TelemetryProps } from '../../../shared/src/telemetry/telemetryService'
 
-interface Props extends SettingsAreaPageProps, Pick<RouteComponentProps<{}>, 'history' | 'location'>, ThemeProps {
+interface Props
+    extends SettingsAreaPageProps,
+        Pick<RouteComponentProps<{}>, 'history' | 'location'>,
+        ThemeProps,
+        TelemetryProps {
     /** Optional description to render above the editor. */
     description?: JSX.Element
 }
@@ -30,11 +35,12 @@ export class SettingsPage extends React.PureComponent<Props, State> {
                 onDidDiscard={this.onDidDiscard}
                 history={this.props.history}
                 isLightTheme={this.props.isLightTheme}
+                telemetryService={this.props.telemetryService}
             />
         )
     }
 
-    private onDidCommit = async (lastID: number | null, contents: string) => {
+    private onDidCommit = async (lastID: number | null, contents: string): Promise<void> => {
         this.setState({ commitError: undefined })
 
         // When updating settings for a settings subject that is in the viewer's settings cascade (i.e., if the
@@ -43,9 +49,9 @@ export class SettingsPage extends React.PureComponent<Props, State> {
         //
         // If the settings update is for some other subject that is unrelated to the viewer, then this is not
         // necessary.
-        const isSubjectInViewerSettingsCascade =
-            this.props.settingsCascade.subjects &&
-            this.props.settingsCascade.subjects.some(({ subject }) => subject.id === this.props.subject.id)
+        const isSubjectInViewerSettingsCascade = this.props.settingsCascade.subjects?.some(
+            ({ subject }) => subject.id === this.props.subject.id
+        )
 
         try {
             if (isSubjectInViewerSettingsCascade) {
@@ -55,9 +61,9 @@ export class SettingsPage extends React.PureComponent<Props, State> {
             }
             this.setState({ commitError: undefined })
             this.props.onUpdate()
-        } catch (err) {
-            this.setState({ commitError: err })
-            console.error(err)
+        } catch (commitError) {
+            this.setState({ commitError })
+            console.error(commitError)
         }
     }
 

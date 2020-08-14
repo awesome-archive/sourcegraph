@@ -1,44 +1,6 @@
-import { parse, ParseError, ParseErrorCode } from '@sqs/jsonc-parser'
 import settingsSchemaJSON from '../../../schema/settings.schema.json'
 import { ConfiguredRegistryExtension } from '../../../shared/src/extensions/extension'
-import * as GQL from '../../../shared/src/graphql/schema'
-import { isSettingsValid, SettingsCascadeOrError } from '../../../shared/src/settings/settings'
-import { createAggregateError, isErrorLike } from '../../../shared/src/util/errors'
-
-/**
- * Parses the JSON input using the error-tolerant parser used for site config and settings.
- */
-export function parseJSON(text: string): any {
-    const errors: ParseError[] = []
-    const o = parse(text, errors, { allowTrailingComma: true, disallowComments: false })
-    if (errors.length > 0) {
-        throw createAggregateError(
-            errors.map(v => ({
-                ...v,
-                code: ParseErrorCode[v.error],
-                message: `Configuration parse error, code: ${v.error} (offset: ${v.offset}, length: ${v.length})`,
-            }))
-        )
-    }
-    return o
-}
-
-export function toGQLKeyPath(keyPath: (string | number)[]): GQL.IKeyPathSegment[] {
-    return keyPath.map(v => (typeof v === 'string' ? { property: v } : { index: v }))
-}
-
-export function getLastIDForSubject(settingsCascade: SettingsCascadeOrError, subject: GQL.ID): number | null {
-    if (!isSettingsValid(settingsCascade)) {
-        throw new Error('invalid settings')
-    }
-
-    // Find the settings lastID so we can update the settings.
-    const subjectInfo = settingsCascade.subjects.find(s => s.subject.id === subject)
-    if (!subjectInfo) {
-        throw new Error('unable to find owner (settings subject) of saved search')
-    }
-    return subjectInfo.lastID
-}
+import { isErrorLike } from '../../../shared/src/util/errors'
 
 /**
  * Merges settings schemas from base settings and all configured extensions.
@@ -51,12 +13,11 @@ export function mergeSettingsSchemas(configuredExtensions: Pick<ConfiguredRegist
         allOf: [
             { $ref: settingsSchemaJSON.$id },
             ...(configuredExtensions || [])
-                .map(ce => {
+                .map(configuredExtension => {
                     if (
-                        ce.manifest &&
-                        !isErrorLike(ce.manifest) &&
-                        ce.manifest.contributes &&
-                        ce.manifest.contributes.configuration
+                        configuredExtension.manifest &&
+                        !isErrorLike(configuredExtension.manifest) &&
+                        configuredExtension.manifest.contributes?.configuration
                     ) {
                         // Adjust the schema to describe a valid instance of settings for a subject (instead of the
                         // final, merged settings).
@@ -70,7 +31,7 @@ export function mergeSettingsSchemas(configuredExtensions: Pick<ConfiguredRegist
                         // (e.g., for user settings in the above example). Therefore, we must allow additionalProperties
                         // and set required to [] to avoid erroneous validation errors.
                         return {
-                            ...ce.manifest.contributes.configuration,
+                            ...configuredExtension.manifest.contributes.configuration,
 
                             // Force allow additionalProperties to prevent any single extension's configuration schema
                             // from invalidating all other extensions' configuration properties.

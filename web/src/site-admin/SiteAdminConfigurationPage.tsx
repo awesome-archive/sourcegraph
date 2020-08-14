@@ -11,10 +11,191 @@ import { DynamicallyImportedMonacoSettingsEditor } from '../settings/Dynamically
 import { refreshSiteFlags } from '../site/backend'
 import { eventLogger } from '../tracking/eventLogger'
 import { fetchSite, reloadSite, updateSiteConfiguration } from './backend'
-import { SiteAdminManagementConsolePassword } from './SiteAdminManagementConsolePassword'
+import { ErrorAlert } from '../components/alerts'
+import * as jsonc from '@sqs/jsonc-parser'
+import { setProperty } from '@sqs/jsonc-parser/lib/edit'
+import * as H from 'history'
+import { SiteConfiguration } from '../schema/site.schema'
+import { ThemeProps } from '../../../shared/src/theme'
+import { TelemetryProps } from '../../../shared/src/telemetry/telemetryService'
 
-interface Props extends RouteComponentProps<any> {
-    isLightTheme: boolean
+const defaultFormattingOptions: jsonc.FormattingOptions = {
+    eol: '\n',
+    insertSpaces: true,
+    tabSize: 2,
+}
+
+function editWithComments(
+    config: string,
+    path: jsonc.JSONPath,
+    value: any,
+    comments: { [key: string]: string }
+): jsonc.Edit {
+    const edit = setProperty(config, path, value, defaultFormattingOptions)[0]
+    for (const commentKey of Object.keys(comments)) {
+        edit.content = edit.content.replace(`"${commentKey}": true,`, comments[commentKey])
+        edit.content = edit.content.replace(`"${commentKey}": true`, comments[commentKey])
+    }
+    return edit
+}
+
+const quickConfigureActions: {
+    id: string
+    label: string
+    run: (config: string) => { edits: jsonc.Edit[]; selectText: string }
+}[] = [
+    {
+        id: 'setExternalURL',
+        label: 'Set external URL',
+        run: config => {
+            const value = '<external URL>'
+            const edits = setProperty(config, ['externalURL'], value, defaultFormattingOptions)
+            return { edits, selectText: '<external URL>' }
+        },
+    },
+    {
+        id: 'setLicenseKey',
+        label: 'Set license key',
+        run: config => {
+            const value = '<license key>'
+            const edits = setProperty(config, ['licenseKey'], value, defaultFormattingOptions)
+            return { edits, selectText: '<license key>' }
+        },
+    },
+    {
+        id: 'addGitLabAuth',
+        label: 'Add GitLab sign-in',
+        run: config => {
+            const edits = [
+                editWithComments(
+                    config,
+                    ['auth.providers', -1],
+                    {
+                        COMMENT: true,
+                        type: 'gitlab',
+                        displayName: 'GitLab',
+                        url: '<GitLab URL>',
+                        clientID: '<client ID>',
+                        clientSecret: '<client secret>',
+                    },
+                    {
+                        COMMENT: '// See https://docs.sourcegraph.com/admin/auth#gitlab for instructions',
+                    }
+                ),
+            ]
+            return { edits, selectText: '<GitLab URL>' }
+        },
+    },
+    {
+        id: 'addGitHubAuth',
+        label: 'Add GitHub sign-in',
+        run: config => {
+            const edits = [
+                editWithComments(
+                    config,
+                    ['auth.providers', -1],
+                    {
+                        COMMENT: true,
+                        type: 'github',
+                        displayName: 'GitHub',
+                        url: 'https://github.com/',
+                        allowSignup: true,
+                        clientID: '<client ID>',
+                        clientSecret: '<client secret>',
+                    },
+                    { COMMENT: '// See https://docs.sourcegraph.com/admin/auth#github for instructions' }
+                ),
+            ]
+            return { edits, selectText: '<client ID>' }
+        },
+    },
+    {
+        id: 'useOneLoginSAML',
+        label: 'Add OneLogin SAML',
+        run: config => {
+            const edits = [
+                editWithComments(
+                    config,
+                    ['auth.providers', -1],
+                    {
+                        COMMENT: true,
+
+                        type: 'saml',
+                        displayName: 'OneLogin',
+                        identityProviderMetadataURL: '<identity provider metadata URL>',
+                    },
+                    {
+                        COMMENT: '// See https://docs.sourcegraph.com/admin/auth/saml/one_login for instructions',
+                    }
+                ),
+            ]
+            return { edits, selectText: '<identity provider metadata URL>' }
+        },
+    },
+    {
+        id: 'useOktaSAML',
+        label: 'Add Okta SAML',
+        run: config => {
+            const value = {
+                COMMENT: true,
+                type: 'saml',
+                displayName: 'Okta',
+                identityProviderMetadataURL: '<identity provider metadata URL>',
+            }
+            const edits = [
+                editWithComments(config, ['auth.providers', -1], value, {
+                    COMMENT: '// See https://docs.sourcegraph.com/admin/auth/saml/okta for instructions',
+                }),
+            ]
+            return { edits, selectText: '<identity provider metadata URL>' }
+        },
+    },
+    {
+        id: 'useSAML',
+        label: 'Add other SAML',
+        run: config => {
+            const edits = [
+                editWithComments(
+                    config,
+                    ['auth.providers', -1],
+                    {
+                        COMMENT: true,
+                        type: 'saml',
+                        displayName: 'SAML',
+                        identityProviderMetadataURL: '<SAML IdP metadata URL>',
+                    },
+                    { COMMENT: '// See https://docs.sourcegraph.com/admin/auth/saml for instructions' }
+                ),
+            ]
+            return { edits, selectText: '<SAML IdP metadata URL>' }
+        },
+    },
+    {
+        id: 'useOIDC',
+        label: 'Add OpenID Connect',
+        run: config => {
+            const edits = [
+                editWithComments(
+                    config,
+                    ['auth.providers', -1],
+                    {
+                        COMMENT: true,
+                        type: 'openidconnect',
+                        displayName: 'OpenID Connect',
+                        issuer: '<identity provider URL>',
+                        clientID: '<client ID>',
+                        clientSecret: '<client secret>',
+                    },
+                    { COMMENT: '// See https://docs.sourcegraph.com/admin/auth#openid-connect for instructions' }
+                ),
+            ]
+            return { edits, selectText: '<identity provider URL>' }
+        },
+    },
+]
+
+interface Props extends RouteComponentProps<{}>, ThemeProps, TelemetryProps {
+    history: H.History
 }
 
 interface State {
@@ -64,14 +245,33 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
                 .pipe(
                     tap(() => this.setState({ saving: true, error: undefined })),
                     concatMap(newContents => {
-                        const lastConfiguration = this.state.site && this.state.site.configuration
-                        const lastConfigurationID = (lastConfiguration && lastConfiguration.id) || 0
+                        const lastConfiguration = this.state.site?.configuration
+                        const lastConfigurationID = lastConfiguration?.id || 0
 
                         return updateSiteConfiguration(lastConfigurationID, newContents).pipe(
                             catchError(error => {
                                 console.error(error)
                                 this.setState({ saving: false, error })
                                 return []
+                            }),
+                            tap(() => {
+                                // Flipping the Campaigns feature flag
+                                // ("automation") requires a reload for the
+                                // Campaigns UI to be correctly rendered.
+                                //
+                                // This should be removed once the feature flag
+                                // is removed.
+                                const lastAutomationEnabled =
+                                    (lastConfiguration &&
+                                        (jsonc.parse(lastConfiguration.effectiveContents) as SiteConfiguration)
+                                            ?.experimentalFeatures?.automation) === 'enabled'
+                                const newAutomationEnabled =
+                                    (jsonc.parse(newContents) as SiteConfiguration)?.experimentalFeatures
+                                        ?.automation === 'enabled'
+
+                                if (lastAutomationEnabled !== newAutomationEnabled) {
+                                    window.location.reload()
+                                }
                             })
                         )
                     }),
@@ -81,13 +281,17 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
                         } else {
                             // Refresh site flags so that global site alerts
                             // reflect the latest configuration.
-                            refreshSiteFlags().subscribe({ error: err => console.error(err) })
+                            // eslint-disable-next-line rxjs/no-ignored-subscription, rxjs/no-nested-subscribe
+                            refreshSiteFlags().subscribe({ error: error => console.error(error) })
                         }
                         this.setState({ restartToApply })
                         this.remoteRefreshes.next()
                     })
                 )
-                .subscribe(() => this.setState({ saving: false }), error => this.setState({ saving: false, error }))
+                .subscribe(
+                    () => this.setState({ saving: false }),
+                    error => this.setState({ saving: false, error })
+                )
         )
 
         this.subscriptions.add(
@@ -99,8 +303,8 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
                     mergeMap(() =>
                         // wait for server to restart
                         fetchSite().pipe(
-                            retryWhen(x =>
-                                x.pipe(
+                            retryWhen(errors =>
+                                errors.pipe(
                                     tap(() => this.forceUpdate()),
                                     delay(500)
                                 )
@@ -128,9 +332,12 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
         const alerts: JSX.Element[] = []
         if (this.state.error) {
             alerts.push(
-                <div key="error" className="alert alert-danger site-admin-configuration-page__alert">
-                    <p>Error: {this.state.error.message}</p>
-                </div>
+                <ErrorAlert
+                    key="error"
+                    className="site-admin-configuration-page__alert"
+                    error={this.state.error}
+                    history={this.props.history}
+                />
             )
         }
         if (this.state.reloadStartedAt) {
@@ -154,25 +361,25 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
                     className="alert alert-warning site-admin-configuration-page__alert site-admin-configuration-page__alert-flex"
                 >
                     Server restart is required for the configuration to take effect.
-                    <button type="button" className="btn btn-primary btn-sm" onClick={this.reloadSite}>
-                        Restart server
-                    </button>
+                    {(this.state.site === undefined || this.state.site?.canReloadSite) && (
+                        <button type="button" className="btn btn-primary btn-sm" onClick={this.reloadSite}>
+                            Restart server
+                        </button>
+                    )}
                 </div>
             )
         }
         if (
-            this.state.site &&
-            this.state.site.configuration &&
-            this.state.site.configuration.validationMessages &&
+            this.state.site?.configuration?.validationMessages &&
             this.state.site.configuration.validationMessages.length > 0
         ) {
             alerts.push(
                 <div key="validation-messages" className="alert alert-danger site-admin-configuration-page__alert">
                     <p>The server reported issues in the last-saved config:</p>
                     <ul>
-                        {this.state.site.configuration.validationMessages.map((e, i) => (
-                            <li key={i} className="site-admin-configuration-page__alert-item">
-                                {e}
+                        {this.state.site.configuration.validationMessages.map((message, index) => (
+                            <li key={index} className="site-admin-configuration-page__alert-item">
+                                {message}
                             </li>
                         ))}
                     </ul>
@@ -181,8 +388,7 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
         }
 
         // Avoid user confusion with values.yaml properties mixed in with site config properties.
-        const contents =
-            this.state.site && this.state.site.configuration && this.state.site.configuration.effectiveContents
+        const contents = this.state.site?.configuration?.effectiveContents
         const legacyKubernetesConfigProps = [
             'alertmanagerConfig',
             'alertmanagerURL',
@@ -210,7 +416,7 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
             'rbac',
             'storageClass',
             'useAlertManager',
-        ].filter(prop => contents && contents.includes(`"${prop}"`))
+        ].filter(property => contents?.includes(`"${property}"`))
         if (legacyKubernetesConfigProps.length > 0) {
             alerts.push(
                 <div
@@ -230,24 +436,14 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
         return (
             <div className="site-admin-configuration-page">
                 <PageTitle title="Configuration - Admin" />
-                <div className="d-flex justify-content-between align-items-center mt-3 mb-1">
-                    <h2 className="mb-0">Site configuration</h2>
-                </div>
+                <h2>Site configuration</h2>
                 <p>
                     View and edit the Sourcegraph site configuration. See{' '}
                     <Link to="/help/admin/config/site_config">documentation</Link> for more information.
                 </p>
-                <div className="mb-3">
-                    <SiteAdminManagementConsolePassword />
-                </div>
-                <p>
-                    Authentication providers, the application URL, license key, and other critical configuration may be
-                    edited via the{' '}
-                    <a href="https://docs.sourcegraph.com/admin/management_console">management console</a>.
-                </p>
                 <div className="site-admin-configuration-page__alerts">{alerts}</div>
                 {this.state.loading && <LoadingSpinner className="icon-inline" />}
-                {this.state.site && this.state.site.configuration && (
+                {this.state.site?.configuration && (
                     <div>
                         <DynamicallyImportedMonacoSettingsEditor
                             value={contents || ''}
@@ -258,7 +454,9 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
                             height={600}
                             isLightTheme={this.props.isLightTheme}
                             onSave={this.onSave}
+                            actions={quickConfigureActions}
                             history={this.props.history}
+                            telemetryService={this.props.telemetryService}
                         />
                         <p className="form-text text-muted">
                             <small>
@@ -273,12 +471,12 @@ export class SiteAdminConfigurationPage extends React.Component<Props, State> {
         )
     }
 
-    private onSave = (value: string) => {
+    private onSave = (value: string): void => {
         eventLogger.log('SiteConfigurationSaved')
         this.remoteUpdates.next(value)
     }
 
-    private reloadSite = () => {
+    private reloadSite = (): void => {
         eventLogger.log('SiteReloaded')
         this.siteReloads.next()
     }

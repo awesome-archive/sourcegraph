@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { RepositoryIcon } from '../../../shared/src/components/icons'
+import SourceRepositoryIcon from 'mdi-react/SourceRepositoryIcon'
 import { TreeLayerProps } from './TreeLayer'
 import { maxEntries, treePadding } from './util'
 
@@ -34,10 +34,10 @@ export const File: React.FunctionComponent<FileProps> = props => (
                                 onClick={props.noopRowClick}
                                 tabIndex={-1}
                             >
-                                <RepositoryIcon className="icon-inline" />
+                                <SourceRepositoryIcon className="icon-inline" />
                             </span>
                             <span className="tree__row-label">
-                                {props.entryInfo.name} @ {props.entryInfo.submodule.commit.substr(0, 7)}
+                                {props.entryInfo.name} @ {props.entryInfo.submodule.commit.slice(0, 7)}
                             </span>
                         </div>
                     </Link>
@@ -50,23 +50,23 @@ export const File: React.FunctionComponent<FileProps> = props => (
                                 // eslint-disable-next-line react/forbid-dom-props
                                 style={treePadding(props.depth, true)}
                             >
-                                <RepositoryIcon className="icon-inline" />
+                                <SourceRepositoryIcon className="icon-inline" />
                             </span>
                             <span className="tree__row-label">
-                                {props.entryInfo.name} @ {props.entryInfo.submodule.commit.substr(0, 7)}
+                                {props.entryInfo.name} @ {props.entryInfo.submodule.commit.slice(0, 7)}
                             </span>
                         </div>
                     </div>
                 )
             ) : (
                 <Link
-                    className="tree__row-contents"
+                    className="tree__row-contents test-tree-file-link"
                     to={props.entryInfo.url}
                     onClick={props.linkRowClick}
                     data-tree-path={props.entryInfo.path}
                     draggable={false}
                     title={props.entryInfo.path}
-                    // eslint-disable-next-line react/forbid-dom-props (needed because of dynamic styling)
+                    // needed because of dynamic styling
                     style={treePadding(props.depth, false)}
                     tabIndex={-1}
                 >

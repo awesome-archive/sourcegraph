@@ -58,7 +58,7 @@ function isDocumentFilter(value: any): value is DocumentFilter {
 }
 
 function match1(selector: DocumentSelector, document: Pick<TextDocument, 'uri' | 'languageId'>): boolean {
-    return score(selector, document.uri, document.languageId) !== 0
+    return score(selector, new URL(document.uri), document.languageId) !== 0
 }
 
 /**
@@ -72,22 +72,22 @@ function match1(selector: DocumentSelector, document: Pick<TextDocument, 'uri' |
  * Taken from
  * https://github.com/Microsoft/vscode/blob/3d35801127f0a62d58d752bc613506e836c5d120/src/vs/editor/common/modes/languageSelector.ts#L24.
  */
-export function score(selector: DocumentSelector, candidateUri: string, candidateLanguage: string): number {
+export function score(selector: DocumentSelector, candidateUri: URL, candidateLanguage: string): number {
     // array -> take max individual value
-    let ret = 0
+    let returnValue = 0
     for (const filter of selector) {
         const value = score1(filter, candidateUri, candidateLanguage)
         if (value === 10) {
             return value // already at the highest
         }
-        if (value > ret) {
-            ret = value
+        if (value > returnValue) {
+            returnValue = value
         }
     }
-    return ret
+    return returnValue
 }
 
-function score1(selector: DocumentSelector[0], candidateUri: string, candidateLanguage: string): number {
+function score1(selector: DocumentSelector[0], candidateUri: URL, candidateLanguage: string): number {
     if (typeof selector === 'string') {
         // Shorthand notation: "mylang" -> {language: "mylang"}, "*" -> {language: "*""}.
         if (selector === '*') {
@@ -99,40 +99,50 @@ function score1(selector: DocumentSelector[0], candidateUri: string, candidateLa
         return 0
     }
 
-    const { language, scheme, pattern } = selector
+    const { language, scheme, pattern, baseUri } = selector
     if (!language && !scheme && !pattern) {
         // `{}` was passed as a document filter, treat it like a wildcard
         return 5
     }
-    let ret = 0
+    let returnValue = 0
     if (scheme) {
-        if (candidateUri.startsWith(scheme + ':')) {
-            ret = 10
+        if (candidateUri.protocol === scheme + ':') {
+            returnValue = 10
         } else if (scheme === '*') {
-            ret = 5
+            returnValue = 5
+        } else {
+            return 0
+        }
+    }
+    if (baseUri) {
+        if (candidateUri.href.startsWith(baseUri.toString())) {
+            returnValue = 5
         } else {
             return 0
         }
     }
     if (language) {
         if (language === candidateLanguage) {
-            ret = 10
+            returnValue = 10
         } else if (language === '*') {
-            ret = Math.max(ret, 5)
+            returnValue = Math.max(returnValue, 5)
         } else {
             return 0
         }
     }
     if (pattern) {
-        if (pattern === candidateUri || candidateUri.endsWith(pattern) || minimatch(candidateUri, pattern)) {
-            ret = 10
-        } else if (minimatch(candidateUri, '**/' + pattern, { dot: true })) {
-            ret = 5
+        const filePath = decodeURIComponent(
+            candidateUri.protocol === 'git:' ? candidateUri.hash.slice(1) : candidateUri.pathname.replace(/^\//, '')
+        )
+        if (filePath.endsWith(pattern) || minimatch(filePath, pattern)) {
+            returnValue = 10
+        } else if (filePath && minimatch(filePath, pattern, { dot: true, matchBase: true })) {
+            returnValue = 5
         } else {
             return 0
         }
     }
-    return ret
+    return returnValue
 }
 
 /**
@@ -152,15 +162,15 @@ export function offsetToPosition(text: string, offset: number): Position {
 /**
  * Convert a position in text to the equivalent character offset.
  */
-export function positionToOffset(text: string, pos: Position): number {
-    if (pos.line === 0) {
-        return pos.character
+export function positionToOffset(text: string, position: Position): number {
+    if (position.line === 0) {
+        return position.character
     }
     let line = 0
     let lastNewLineOffset = -1
     do {
-        if (pos.line === line) {
-            return lastNewLineOffset + 1 + pos.character
+        if (position.line === line) {
+            return lastNewLineOffset + 1 + position.character
         }
         lastNewLineOffset = text.indexOf('\n', lastNewLineOffset + 1)
         line++

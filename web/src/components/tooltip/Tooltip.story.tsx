@@ -1,12 +1,15 @@
 import { storiesOf } from '@storybook/react'
 import React, { useCallback } from 'react'
 import { Tooltip } from './Tooltip'
+import tooltipStyles from './Tooltip.scss'
+import bootstrapStyles from 'bootstrap/scss/bootstrap.scss'
 
-import './Tooltip.scss'
-
-const { add } = storiesOf('Tooltip', module).addDecorator(story => (
-    // tslint:disable-next-line: jsx-ban-props
-    <div style={{ maxWidth: '20rem', margin: '2rem' }}>{story()}</div>
+const { add } = storiesOf('web/Tooltip', module).addDecorator(story => (
+    <>
+        <style>{bootstrapStyles}</style>
+        <style>{tooltipStyles}</style>
+        <div style={{ maxWidth: '20rem', margin: '2rem' }}>{story()}</div>
+    </>
 ))
 
 add('Hover', () => (
@@ -19,9 +22,9 @@ add('Hover', () => (
 ))
 
 const PinnedTooltip: React.FunctionComponent = () => {
-    const clickElement = useCallback((e: HTMLElement | null) => {
-        if (e) {
-            e.click()
+    const clickElement = useCallback((element: HTMLElement | null) => {
+        if (element) {
+            element.click()
         }
     }, [])
     return (

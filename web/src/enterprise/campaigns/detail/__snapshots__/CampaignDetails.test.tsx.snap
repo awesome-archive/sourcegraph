@@ -1,0 +1,547 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`CampaignDetails creation form for empty manual campaign 1`] = `
+<HeroPage
+  icon={
+    Object {
+      "$$typeof": Symbol(react.memo),
+      "compare": null,
+      "type": [Function],
+    }
+  }
+  title="Campaign not found"
+/>
+`;
+
+exports[`CampaignDetails creation form given existing patch set 1`] = `
+<CampaignDetails
+  authenticatedUser={
+    Object {
+      "avatarURL": null,
+      "id": "a",
+      "username": "alice",
+    }
+  }
+  history="[History]"
+  isLightTheme={true}
+  location="[Location path=/?patchSet=p]"
+  telemetryService={
+    Object {
+      "log": [Function],
+      "logViewEvent": [Function],
+    }
+  }
+>
+  <HeroPage
+    icon={
+      Object {
+        "$$typeof": Symbol(react.memo),
+        "compare": null,
+        "type": [Function],
+      }
+    }
+    title="Campaign not found"
+  >
+    <div
+      className="hero-page "
+    >
+      <div
+        className="hero-page__icon"
+      >
+        <Memo(AlertCircleIcon)>
+          <svg
+            className="mdi-icon "
+            fill="currentColor"
+            height={24}
+            viewBox="0 0 24 24"
+            width={24}
+          >
+            <path
+              d="M13,13H11V7H13M13,17H11V15H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z"
+            />
+          </svg>
+        </Memo(AlertCircleIcon)>
+      </div>
+      <div
+        className="hero-page__title"
+      >
+        Campaign not found
+      </div>
+    </div>
+  </HeroPage>
+</CampaignDetails>
+`;
+
+exports[`CampaignDetails viewerCanAdminister: false viewing existing 1`] = `
+<CampaignDetails
+  _fetchCampaignById={[Function]}
+  authenticatedUser={
+    Object {
+      "avatarURL": null,
+      "id": "a",
+      "username": "alice",
+    }
+  }
+  campaignID="c"
+  history="[History]"
+  isLightTheme={true}
+  location="[Location path=/]"
+  telemetryService={
+    Object {
+      "log": [Function],
+      "logViewEvent": [Function],
+    }
+  }
+>
+  <PageTitle
+    title="n"
+  />
+  <CampaignActionsBar
+    campaign={
+      Object {
+        "__typename": "Campaign",
+        "author": Object {
+          "username": "alice",
+        },
+        "branch": "awesome-branch",
+        "changesetCountsOverTime": Array [],
+        "changesets": Object {
+          "stats": Object {
+            "closed": 0,
+            "merged": 0,
+            "total": 10,
+          },
+          "totalCount": 2,
+        },
+        "closedAt": null,
+        "createdAt": "2020-01-01",
+        "description": "d",
+        "diffStat": Object {
+          "__typename": "IDiffStat",
+          "added": 5,
+          "changed": 3,
+          "deleted": 2,
+        },
+        "hasUnpublishedPatches": false,
+        "id": "c",
+        "name": "n",
+        "updatedAt": "2020-01-01",
+        "viewerCanAdminister": false,
+      }
+    }
+  >
+    <div
+      className="mb-2"
+    >
+      <span>
+        <AnchorLink
+          to="/campaigns"
+        >
+          <a
+            href="/campaigns"
+          >
+            Campaigns
+          </a>
+        </AnchorLink>
+      </span>
+      <span
+        className="text-muted d-inline-block mx-1"
+      >
+        /
+      </span>
+      <span>
+        n
+      </span>
+    </div>
+    <div
+      className="d-flex mb-2 position-relative"
+    >
+      <div>
+        <h1
+          className="mb-1"
+        >
+          n
+        </h1>
+        <div>
+          <CampaignStateBadge
+            isClosed={false}
+          >
+            <span
+              className="badge badge-success text-uppercase mr-2"
+            >
+              <CampaignsIcon
+                className="icon-inline campaign-actions-bar__campaign-icon"
+              />
+               Open
+            </span>
+          </CampaignStateBadge>
+          <small
+            className="text-muted"
+          >
+            0
+            % complete. 
+            2
+             changesets total
+          </small>
+        </div>
+      </div>
+    </div>
+  </CampaignActionsBar>
+  <div
+    className="card mt-2"
+  >
+    <div
+      className="card-header"
+    >
+      <strong>
+        <UserAvatar
+          className="icon-inline"
+          user={
+            Object {
+              "username": "alice",
+            }
+          }
+        />
+         
+        alice
+      </strong>
+       
+      started 
+      <Timestamp
+        date="2020-01-01"
+      >
+        <span
+          className="timestamp"
+          data-tooltip="2020-01-01"
+        >
+          in almost 14 years
+        </span>
+      </Timestamp>
+    </div>
+    <div
+      className="card-body"
+    >
+      <Markdown
+        dangerousInnerHTML="<p>d</p>
+"
+        history="[History]"
+      >
+        <div
+          className="markdown"
+          dangerouslySetInnerHTML={
+            Object {
+              "__html": "<p>d</p>
+",
+            }
+          }
+          onClick={[Function]}
+        />
+      </Markdown>
+    </div>
+  </div>
+  <h3
+    className="mt-4 mb-2"
+  >
+    Progress
+  </h3>
+  <CampaignBurndownChart
+    changesetCountsOverTime={Array []}
+    history="[History]"
+  >
+    <p>
+      <em>
+        Burndown chart will be shown when there is more than 1 day of data.
+      </em>
+    </p>
+  </CampaignBurndownChart>
+  <h3
+    className="mt-4 d-flex align-items-end mb-0"
+  >
+    2
+     
+    Changesets
+  </h3>
+  <CampaignChangesets
+    campaign={
+      Object {
+        "__typename": "Campaign",
+        "author": Object {
+          "username": "alice",
+        },
+        "branch": "awesome-branch",
+        "changesetCountsOverTime": Array [],
+        "changesets": Object {
+          "stats": Object {
+            "closed": 0,
+            "merged": 0,
+            "total": 10,
+          },
+          "totalCount": 2,
+        },
+        "closedAt": null,
+        "createdAt": "2020-01-01",
+        "description": "d",
+        "diffStat": Object {
+          "__typename": "IDiffStat",
+          "added": 5,
+          "changed": 3,
+          "deleted": 2,
+        },
+        "hasUnpublishedPatches": false,
+        "id": "c",
+        "name": "n",
+        "updatedAt": "2020-01-01",
+        "viewerCanAdminister": false,
+      }
+    }
+    campaignUpdates="[Subject]"
+    changesetUpdates="[Subject]"
+    history="[History]"
+    isLightTheme={true}
+    location="[Location path=/]"
+    telemetryService={
+      Object {
+        "log": [Function],
+        "logViewEvent": [Function],
+      }
+    }
+  />
+</CampaignDetails>
+`;
+
+exports[`CampaignDetails viewerCanAdminister: true viewing existing 1`] = `
+<CampaignDetails
+  _fetchCampaignById={[Function]}
+  authenticatedUser={
+    Object {
+      "avatarURL": null,
+      "id": "a",
+      "username": "alice",
+    }
+  }
+  campaignID="c"
+  history="[History]"
+  isLightTheme={true}
+  location="[Location path=/]"
+  telemetryService={
+    Object {
+      "log": [Function],
+      "logViewEvent": [Function],
+    }
+  }
+>
+  <PageTitle
+    title="n"
+  />
+  <CampaignActionsBar
+    campaign={
+      Object {
+        "__typename": "Campaign",
+        "author": Object {
+          "username": "alice",
+        },
+        "branch": "awesome-branch",
+        "changesetCountsOverTime": Array [],
+        "changesets": Object {
+          "stats": Object {
+            "closed": 0,
+            "merged": 0,
+            "total": 10,
+          },
+          "totalCount": 2,
+        },
+        "closedAt": null,
+        "createdAt": "2020-01-01",
+        "description": "d",
+        "diffStat": Object {
+          "__typename": "IDiffStat",
+          "added": 5,
+          "changed": 3,
+          "deleted": 2,
+        },
+        "hasUnpublishedPatches": false,
+        "id": "c",
+        "name": "n",
+        "updatedAt": "2020-01-01",
+        "viewerCanAdminister": true,
+      }
+    }
+  >
+    <div
+      className="mb-2"
+    >
+      <span>
+        <AnchorLink
+          to="/campaigns"
+        >
+          <a
+            href="/campaigns"
+          >
+            Campaigns
+          </a>
+        </AnchorLink>
+      </span>
+      <span
+        className="text-muted d-inline-block mx-1"
+      >
+        /
+      </span>
+      <span>
+        n
+      </span>
+    </div>
+    <div
+      className="d-flex mb-2 position-relative"
+    >
+      <div>
+        <h1
+          className="mb-1"
+        >
+          n
+        </h1>
+        <div>
+          <CampaignStateBadge
+            isClosed={false}
+          >
+            <span
+              className="badge badge-success text-uppercase mr-2"
+            >
+              <CampaignsIcon
+                className="icon-inline campaign-actions-bar__campaign-icon"
+              />
+               Open
+            </span>
+          </CampaignStateBadge>
+          <small
+            className="text-muted"
+          >
+            0
+            % complete. 
+            2
+             changesets total
+          </small>
+        </div>
+      </div>
+    </div>
+  </CampaignActionsBar>
+  <div
+    className="card mt-2"
+  >
+    <div
+      className="card-header"
+    >
+      <strong>
+        <UserAvatar
+          className="icon-inline"
+          user={
+            Object {
+              "username": "alice",
+            }
+          }
+        />
+         
+        alice
+      </strong>
+       
+      started 
+      <Timestamp
+        date="2020-01-01"
+      >
+        <span
+          className="timestamp"
+          data-tooltip="2020-01-01"
+        >
+          in almost 14 years
+        </span>
+      </Timestamp>
+    </div>
+    <div
+      className="card-body"
+    >
+      <Markdown
+        dangerousInnerHTML="<p>d</p>
+"
+        history="[History]"
+      >
+        <div
+          className="markdown"
+          dangerouslySetInnerHTML={
+            Object {
+              "__html": "<p>d</p>
+",
+            }
+          }
+          onClick={[Function]}
+        />
+      </Markdown>
+    </div>
+  </div>
+  <h3
+    className="mt-4 mb-2"
+  >
+    Progress
+  </h3>
+  <CampaignBurndownChart
+    changesetCountsOverTime={Array []}
+    history="[History]"
+  >
+    <p>
+      <em>
+        Burndown chart will be shown when there is more than 1 day of data.
+      </em>
+    </p>
+  </CampaignBurndownChart>
+  <h3
+    className="mt-4 d-flex align-items-end mb-0"
+  >
+    2
+     
+    Changesets
+  </h3>
+  <CampaignChangesets
+    campaign={
+      Object {
+        "__typename": "Campaign",
+        "author": Object {
+          "username": "alice",
+        },
+        "branch": "awesome-branch",
+        "changesetCountsOverTime": Array [],
+        "changesets": Object {
+          "stats": Object {
+            "closed": 0,
+            "merged": 0,
+            "total": 10,
+          },
+          "totalCount": 2,
+        },
+        "closedAt": null,
+        "createdAt": "2020-01-01",
+        "description": "d",
+        "diffStat": Object {
+          "__typename": "IDiffStat",
+          "added": 5,
+          "changed": 3,
+          "deleted": 2,
+        },
+        "hasUnpublishedPatches": false,
+        "id": "c",
+        "name": "n",
+        "updatedAt": "2020-01-01",
+        "viewerCanAdminister": true,
+      }
+    }
+    campaignUpdates="[Subject]"
+    changesetUpdates="[Subject]"
+    history="[History]"
+    isLightTheme={true}
+    location="[Location path=/]"
+    telemetryService={
+      Object {
+        "log": [Function],
+        "logViewEvent": [Function],
+      }
+    }
+  />
+</CampaignDetails>
+`;

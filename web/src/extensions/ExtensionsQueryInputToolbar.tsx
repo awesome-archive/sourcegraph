@@ -27,7 +27,7 @@ export class ExtensionsQueryInputToolbar extends React.PureComponent<Props, Stat
     private toggleCategories = (): void => this.toggleIsOpen('categories')
     private toggleOptions = (): void => this.toggleIsOpen('options')
     private toggleIsOpen = (menu: DropdownMenuID): void =>
-        this.setState(prevState => ({ open: prevState.open === menu ? undefined : menu }))
+        this.setState(previousState => ({ open: previousState.open === menu ? undefined : menu }))
 
     public render(): JSX.Element | null {
         return (
@@ -47,11 +47,7 @@ export class ExtensionsQueryInputToolbar extends React.PureComponent<Props, Stat
                         ))}
                     </DropdownMenu>
                 </ButtonDropdown>{' '}
-                <ButtonDropdown
-                    isOpen={this.state.open === 'options'}
-                    // eslint-disable-next-line react/jsx-no-bind
-                    toggle={this.toggleOptions}
-                >
+                <ButtonDropdown isOpen={this.state.open === 'options'} toggle={this.toggleOptions}>
                     <DropdownToggle caret={true}>Options</DropdownToggle>
                     <DropdownMenu right={true}>
                         <DropdownItem

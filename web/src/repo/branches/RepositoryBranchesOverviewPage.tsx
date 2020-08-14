@@ -1,5 +1,4 @@
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import { upperFirst } from 'lodash'
 import ChevronRightIcon from 'mdi-react/ChevronRightIcon'
 import * as React from 'react'
 import { Link, RouteComponentProps } from 'react-router-dom'
@@ -7,13 +6,15 @@ import { Observable, Subject, Subscription } from 'rxjs'
 import { catchError, distinctUntilChanged, map, startWith, switchMap } from 'rxjs/operators'
 import { gql } from '../../../../shared/src/graphql/graphql'
 import * as GQL from '../../../../shared/src/graphql/schema'
-import { createAggregateError, ErrorLike, isErrorLike } from '../../../../shared/src/util/errors'
+import { createAggregateError, ErrorLike, isErrorLike, asError } from '../../../../shared/src/util/errors'
 import { memoizeObservable } from '../../../../shared/src/util/memoizeObservable'
 import { queryGraphQL } from '../../backend/graphql'
 import { PageTitle } from '../../components/PageTitle'
 import { eventLogger } from '../../tracking/eventLogger'
-import { gitRefFragment, GitRefNode } from '../GitRef'
+import { gitReferenceFragments, GitReferenceNode } from '../GitReference'
 import { RepositoryBranchesAreaPageProps } from './RepositoryBranchesArea'
+import { ErrorAlert } from '../../components/alerts'
+import * as H from 'history'
 
 interface Data {
     defaultBranch: GQL.IGitRef | null
@@ -42,7 +43,7 @@ const queryGitBranches = memoizeObservable(
                         }
                     }
                 }
-                ${gitRefFragment}
+                ${gitReferenceFragments}
             `,
             { ...args, withBehindAhead: true }
         ).pipe(
@@ -67,7 +68,9 @@ const queryGitBranches = memoizeObservable(
     args => `${args.repo}:${args.first}`
 )
 
-interface Props extends RepositoryBranchesAreaPageProps, RouteComponentProps<{}> {}
+interface Props extends RepositoryBranchesAreaPageProps, RouteComponentProps<{}> {
+    history: H.History
+}
 
 interface State {
     /** The page content, undefined while loading, or an error. */
@@ -91,13 +94,16 @@ export class RepositoryBranchesOverviewPage extends React.PureComponent<Props, S
                     switchMap(({ repo }) => {
                         type PartialStateUpdate = Pick<State, 'dataOrError'>
                         return queryGitBranches({ repo: repo.id, first: 10 }).pipe(
-                            catchError(error => [error]),
-                            map((c): PartialStateUpdate => ({ dataOrError: c })),
+                            catchError((error): [ErrorLike] => [asError(error)]),
+                            map((dataOrError): PartialStateUpdate => ({ dataOrError })),
                             startWith<PartialStateUpdate>({ dataOrError: undefined })
                         )
                     })
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), error => console.error(error))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate),
+                    error => console.error(error)
+                )
         )
         this.componentUpdates.next(this.props)
     }
@@ -117,14 +123,14 @@ export class RepositoryBranchesOverviewPage extends React.PureComponent<Props, S
                 {this.state.dataOrError === undefined ? (
                     <LoadingSpinner className="icon-inline mt-2" />
                 ) : isErrorLike(this.state.dataOrError) ? (
-                    <div className="alert alert-danger mt-2">Error: {upperFirst(this.state.dataOrError.message)}</div>
+                    <ErrorAlert className="mt-2" error={this.state.dataOrError} history={this.props.history} />
                 ) : (
                     <div className="repository-branches-page__cards">
                         {this.state.dataOrError.defaultBranch && (
                             <div className="card repository-branches-page__card">
                                 <div className="card-header">Default branch</div>
                                 <ul className="list-group list-group-flush">
-                                    <GitRefNode node={this.state.dataOrError.defaultBranch} />
+                                    <GitReferenceNode node={this.state.dataOrError.defaultBranch} />
                                 </ul>
                             </div>
                         )}
@@ -132,8 +138,8 @@ export class RepositoryBranchesOverviewPage extends React.PureComponent<Props, S
                             <div className="card repository-branches-page__card">
                                 <div className="card-header">Active branches</div>
                                 <div className="list-group list-group-flush">
-                                    {this.state.dataOrError.activeBranches.map((b, i) => (
-                                        <GitRefNode key={i} node={b} />
+                                    {this.state.dataOrError.activeBranches.map((gitReference, index) => (
+                                        <GitReferenceNode key={index} node={gitReference} />
                                     ))}
                                     {this.state.dataOrError.hasMoreActiveBranches && (
                                         <Link

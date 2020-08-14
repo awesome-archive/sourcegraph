@@ -1,49 +1,45 @@
 import { Range, Selection } from '@sourcegraph/extension-api-classes'
 import * as clientType from '@sourcegraph/extension-api-types'
 import { from } from 'rxjs'
-import { distinctUntilChanged, first, switchMap, take, toArray } from 'rxjs/operators'
+import { distinctUntilChanged, first, switchMap, take, toArray, filter } from 'rxjs/operators'
 import * as sourcegraph from 'sourcegraph'
-import { isDefined } from '../../util/types'
+import { isDefined, isTaggedUnionMember } from '../../util/types'
 import { assertToJSON, integrationTestContext } from './testHelpers'
 
 describe('CodeEditor (integration)', () => {
     describe('selection', () => {
         test('observe changes', async () => {
             const {
-                services: { editor: editorService },
+                services: { viewer: viewerService },
                 extensionAPI,
             } = await integrationTestContext()
-            const editors = await from(editorService.editors)
-                .pipe(first())
-                .toPromise()
-
-            editorService.setSelections(editors[0], [new Selection(1, 2, 3, 4)])
-            editorService.setSelections(editors[0], [])
+            const editor = viewerService.viewers.get('viewer#0')!
+            viewerService.setSelections(editor, [new Selection(1, 2, 3, 4)])
+            viewerService.setSelections(editor, [])
 
             const values = await from(extensionAPI.app.windows[0].activeViewComponentChanges)
                 .pipe(
-                    switchMap(c => (c ? c.selectionsChanges : [])),
+                    switchMap(viewer => (viewer && viewer.type === 'CodeEditor' ? viewer.selectionsChanges : [])),
                     distinctUntilChanged(),
                     take(3),
                     toArray()
                 )
                 .toPromise()
-            assertToJSON(values.map(v => v.map(v => Selection.fromPlain(v).toPlain())), [
-                [],
-                [new Selection(1, 2, 3, 4).toPlain()],
-                [],
-            ])
+            assertToJSON(
+                values.map(selections => selections.map(selection => Selection.fromPlain(selection).toPlain())),
+                [[], [new Selection(1, 2, 3, 4).toPlain()], []]
+            )
         })
     })
 
     describe('setDecorations', () => {
         test('adds decorations', async () => {
             const { services, extensionAPI } = await integrationTestContext()
-            const dt = extensionAPI.app.createDecorationType()
+            const decorationType = extensionAPI.app.createDecorationType()
 
             // Set some decorations and check they are present on the client.
             const editor = await getFirstCodeEditor(extensionAPI)
-            editor.setDecorations(dt, [
+            editor.setDecorations(decorationType, [
                 {
                     range: new Range(1, 2, 3, 4),
                     backgroundColor: 'red',
@@ -51,10 +47,7 @@ describe('CodeEditor (integration)', () => {
             ])
             await extensionAPI.internal.sync()
             expect(
-                await services.textDocumentDecoration
-                    .getDecorations({ uri: 'file:///f' })
-                    .pipe(take(1))
-                    .toPromise()
+                await services.textDocumentDecoration.getDecorations({ uri: 'file:///f' }).pipe(take(1)).toPromise()
             ).toEqual([
                 {
                     range: { start: { line: 1, character: 2 }, end: { line: 3, character: 4 } },
@@ -63,13 +56,10 @@ describe('CodeEditor (integration)', () => {
             ] as clientType.TextDocumentDecoration[])
 
             // Clear the decorations and ensure they are removed.
-            editor.setDecorations(dt, [])
+            editor.setDecorations(decorationType, [])
             await extensionAPI.internal.sync()
             expect(
-                await services.textDocumentDecoration
-                    .getDecorations({ uri: 'file:///f' })
-                    .pipe(take(1))
-                    .toPromise()
+                await services.textDocumentDecoration.getDecorations({ uri: 'file:///f' }).pipe(take(1)).toPromise()
             ).toEqual(null)
         })
 
@@ -96,10 +86,7 @@ describe('CodeEditor (integration)', () => {
             ])
             await extensionAPI.internal.sync()
             expect(
-                await services.textDocumentDecoration
-                    .getDecorations({ uri: 'file:///f' })
-                    .pipe(take(1))
-                    .toPromise()
+                await services.textDocumentDecoration.getDecorations({ uri: 'file:///f' }).pipe(take(1)).toPromise()
             ).toEqual([
                 {
                     range: { start: { line: 1, character: 2 }, end: { line: 3, character: 4 } },
@@ -126,10 +113,7 @@ describe('CodeEditor (integration)', () => {
             ])
             await extensionAPI.internal.sync()
             expect(
-                await services.textDocumentDecoration
-                    .getDecorations({ uri: 'file:///f' })
-                    .pipe(take(1))
-                    .toPromise()
+                await services.textDocumentDecoration.getDecorations({ uri: 'file:///f' }).pipe(take(1)).toPromise()
             ).toEqual([
                 {
                     range: { start: { line: 1, character: 2 }, end: { line: 3, character: 4 } },
@@ -149,10 +133,7 @@ describe('CodeEditor (integration)', () => {
             editor.setDecorations(dt2, [])
             await extensionAPI.internal.sync()
             expect(
-                await services.textDocumentDecoration
-                    .getDecorations({ uri: 'file:///f' })
-                    .pipe(take(1))
-                    .toPromise()
+                await services.textDocumentDecoration.getDecorations({ uri: 'file:///f' }).pipe(take(1)).toPromise()
             ).toEqual([
                 {
                     range: { start: { line: 1, character: 2 }, end: { line: 3, character: 4 } },
@@ -165,11 +146,11 @@ describe('CodeEditor (integration)', () => {
 
         it('is backwards compatible with extensions that do not provide a decoration type', async () => {
             const { services, extensionAPI } = await integrationTestContext()
-            const dt = extensionAPI.app.createDecorationType()
+            const decorationType = extensionAPI.app.createDecorationType()
 
             // Set some decorations and check they are present on the client.
             const editor = await getFirstCodeEditor(extensionAPI)
-            editor.setDecorations(dt, [
+            editor.setDecorations(decorationType, [
                 {
                     range: new Range(1, 2, 3, 4),
                     backgroundColor: 'red',
@@ -190,10 +171,7 @@ describe('CodeEditor (integration)', () => {
             // Both sets of decorations should be displayed
             await extensionAPI.internal.sync()
             expect(
-                await services.textDocumentDecoration
-                    .getDecorations({ uri: 'file:///f' })
-                    .pipe(take(1))
-                    .toPromise()
+                await services.textDocumentDecoration.getDecorations({ uri: 'file:///f' }).pipe(take(1)).toPromise()
             ).toEqual([
                 {
                     range: { start: { line: 1, character: 2 }, end: { line: 3, character: 4 } },
@@ -211,11 +189,13 @@ describe('CodeEditor (integration)', () => {
 })
 
 async function getFirstCodeEditor(extensionAPI: typeof sourcegraph): Promise<sourcegraph.CodeEditor> {
-    return await from(extensionAPI.app.activeWindowChanges)
+    return from(extensionAPI.app.activeWindowChanges)
         .pipe(
             first(isDefined),
             switchMap(win => win.activeViewComponentChanges),
-            first(isDefined)
+            filter(isDefined),
+            filter(isTaggedUnionMember('type', 'CodeEditor' as const)),
+            take(1)
         )
         .toPromise()
 }

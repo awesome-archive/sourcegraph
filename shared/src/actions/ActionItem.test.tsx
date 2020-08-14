@@ -2,13 +2,15 @@ import * as H from 'history'
 import React from 'react'
 import renderer from 'react-test-renderer'
 import { createBarrier } from '../api/integration-test/testHelpers'
-import { setLinkComponent } from '../components/Link'
 import { NOOP_TELEMETRY_SERVICE } from '../telemetry/telemetryService'
 import { ActionItem } from './ActionItem'
+import { NEVER } from 'rxjs'
+
+jest.mock('mdi-react/OpenInNewIcon', () => 'OpenInNewIcon')
 
 describe('ActionItem', () => {
     const NOOP_EXTENSIONS_CONTROLLER = { executeCommand: () => Promise.resolve(undefined) }
-    const NOOP_PLATFORM_CONTEXT = { forceUpdateTooltip: () => undefined }
+    const NOOP_PLATFORM_CONTEXT = { forceUpdateTooltip: () => undefined, settings: NEVER }
     const history = H.createMemoryHistory()
 
     test('non-actionItem variant', () => {
@@ -118,7 +120,7 @@ describe('ActionItem', () => {
         // Finish execution. (Use setTimeout to wait for the executeCommand resolution to result in the setState
         // call.)
         done()
-        await new Promise<void>(r => setTimeout(r))
+        await new Promise<void>(resolve => setTimeout(resolve))
         tree = component.toJSON()
         expect(tree).toMatchSnapshot()
     })
@@ -147,7 +149,7 @@ describe('ActionItem', () => {
         // Finish execution. (Use setTimeout to wait for the executeCommand resolution to result in the setState
         // call.)
         done()
-        await new Promise<void>(r => setTimeout(r))
+        await new Promise<void>(resolve => setTimeout(resolve))
         tree = component.toJSON()
         expect(tree).toMatchSnapshot()
     })
@@ -172,7 +174,7 @@ describe('ActionItem', () => {
         // to result in the setState call.)
         let tree = component.toJSON()
         tree!.props.onClick({ preventDefault: () => undefined, currentTarget: { blur: () => undefined } })
-        await new Promise<void>(r => setTimeout(r))
+        await new Promise<void>(resolve => setTimeout(resolve))
         tree = component.toJSON()
         expect(tree).toMatchSnapshot()
     })
@@ -197,24 +199,56 @@ describe('ActionItem', () => {
         // to result in the setState call.)
         let tree = component.toJSON()
         tree!.props.onClick({ preventDefault: () => undefined, currentTarget: { blur: () => undefined } })
-        await new Promise<void>(r => setTimeout(r))
+        await new Promise<void>(resolve => setTimeout(resolve))
         tree = component.toJSON()
         expect(tree).toMatchSnapshot()
     })
 
-    test('render as link for "open" command', () => {
-        setLinkComponent((props: any) => <a {...props} />)
-        afterAll(() => setLinkComponent(null as any)) // reset global env for other tests
+    describe('"open" command', () => {
+        it('renders as link', () => {
+            jsdom.reconfigure({ url: 'https://example.com/foo' })
 
-        const component = renderer.create(
-            <ActionItem
-                action={{ id: 'c', command: 'open', commandArguments: ['https://example.com'], title: 't' }}
-                telemetryService={NOOP_TELEMETRY_SERVICE}
-                location={history.location}
-                extensionsController={NOOP_EXTENSIONS_CONTROLLER}
-                platformContext={NOOP_PLATFORM_CONTEXT}
-            />
-        )
-        expect(component.toJSON()).toMatchSnapshot()
+            const component = renderer.create(
+                <ActionItem
+                    action={{ id: 'c', command: 'open', commandArguments: ['https://example.com/bar'], title: 't' }}
+                    telemetryService={NOOP_TELEMETRY_SERVICE}
+                    location={history.location}
+                    extensionsController={NOOP_EXTENSIONS_CONTROLLER}
+                    platformContext={NOOP_PLATFORM_CONTEXT}
+                />
+            )
+            expect(component.toJSON()).toMatchSnapshot()
+        })
+
+        it('renders as link with icon and opens a new tab for a different origin', () => {
+            jsdom.reconfigure({ url: 'https://example.com/foo' })
+
+            const component = renderer.create(
+                <ActionItem
+                    action={{ id: 'c', command: 'open', commandArguments: ['https://other.com/foo'], title: 't' }}
+                    telemetryService={NOOP_TELEMETRY_SERVICE}
+                    location={history.location}
+                    extensionsController={NOOP_EXTENSIONS_CONTROLLER}
+                    platformContext={NOOP_PLATFORM_CONTEXT}
+                />
+            )
+            expect(component.toJSON()).toMatchSnapshot()
+        })
+
+        it('renders as link that opens in a new tab, but without icon for a different origin as the alt action and a primary action defined', () => {
+            jsdom.reconfigure({ url: 'https://example.com/foo' })
+
+            const component = renderer.create(
+                <ActionItem
+                    action={{ id: 'c1', command: 'whatever', title: 'primary' }}
+                    altAction={{ id: 'c2', command: 'open', commandArguments: ['https://other.com/foo'], title: 'alt' }}
+                    telemetryService={NOOP_TELEMETRY_SERVICE}
+                    location={history.location}
+                    extensionsController={NOOP_EXTENSIONS_CONTROLLER}
+                    platformContext={NOOP_PLATFORM_CONTEXT}
+                />
+            )
+            expect(component.toJSON()).toMatchSnapshot()
+        })
     })
 })

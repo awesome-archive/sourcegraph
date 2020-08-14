@@ -4,8 +4,10 @@ import React from 'react'
 import { ResultContainer } from '../../../shared/src/components/ResultContainer'
 import * as GQL from '../../../shared/src/graphql/schema'
 import { renderMarkdown } from '../../../shared/src/util/markdown'
-import { ThemeProps } from '../theme'
 import { SearchResultMatch } from './SearchResultMatch'
+import { ThemeProps } from '../../../shared/src/theme'
+import * as H from 'history'
+import { Markdown } from '../../../shared/src/components/Markdown'
 
 export interface HighlightRange {
     /**
@@ -24,40 +26,40 @@ export interface HighlightRange {
 
 interface Props extends ThemeProps {
     result: GQL.GenericSearchResultInterface
+    history: H.History
 }
 
 export class SearchResult extends React.Component<Props> {
-    constructor(props: Props) {
-        super(props)
-    }
-
-    private renderTitle = () => (
+    private renderTitle = (): JSX.Element => (
         <div className="search-result__title">
-            <span
-                dangerouslySetInnerHTML={{
-                    __html: this.props.result.label.html
+            <Markdown
+                className="test-search-result-label"
+                dangerousInnerHTML={
+                    this.props.result.label.html
                         ? decode(this.props.result.label.html)
-                        : renderMarkdown(this.props.result.label.text),
-                }}
+                        : renderMarkdown(this.props.result.label.text)
+                }
+                history={this.props.history}
             />
             {this.props.result.detail && (
                 <>
                     <span className="search-result__spacer" />
-                    <small
-                        dangerouslySetInnerHTML={{
-                            __html: this.props.result.detail.html
+                    <Markdown
+                        dangerousInnerHTML={
+                            this.props.result.detail.html
                                 ? decode(this.props.result.detail.html)
-                                : renderMarkdown(this.props.result.detail.text),
-                        }}
+                                : renderMarkdown(this.props.result.detail.text)
+                        }
+                        history={this.props.history}
                     />
                 </>
             )}
         </div>
     )
 
-    private renderBody = () => (
+    private renderBody = (): JSX.Element => (
         <>
-            {this.props.result.matches.map((match, index) => {
+            {this.props.result.matches.map(match => {
                 const highlightRanges: HighlightRange[] = []
                 match.highlights.map(highlight =>
                     highlightRanges.push({
@@ -69,10 +71,11 @@ export class SearchResult extends React.Component<Props> {
 
                 return (
                     <SearchResultMatch
-                        key={`item.url#${index}`}
+                        key={match.url}
                         item={match}
                         highlightRanges={highlightRanges}
                         isLightTheme={this.props.isLightTheme}
+                        history={this.props.history}
                     />
                 )
             })}

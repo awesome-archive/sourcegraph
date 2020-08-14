@@ -1,8 +1,8 @@
 import { isEqual } from 'lodash'
 import React, { createRef, TextareaHTMLAttributes, useEffect, useState } from 'react'
-import { from, Subscription, Unsubscribable } from 'rxjs'
+import { Subscription, Unsubscribable } from 'rxjs'
 import { distinctUntilChanged, filter, map } from 'rxjs/operators'
-import { CodeEditorData, EditorId, EditorService } from '../../api/client/services/editorService'
+import { CodeEditorData, ViewerId, ViewerService, observeEditorAndModel } from '../../api/client/services/viewerService'
 import { ModelService, TextModel } from '../../api/client/services/modelService'
 import { offsetToPosition, positionToOffset } from '../../api/client/types/textDocument'
 import { ExtensionsControllerProps } from '../../extensions/controller'
@@ -35,11 +35,11 @@ export const EditorTextFieldUtils = {
      * Update the editor's selection from the element's selection.
      */
     updateEditorSelectionFromElement: (
-        editorService: Pick<EditorService, 'setSelections'>,
-        editor: EditorId,
+        viewerService: Pick<ViewerService, 'setSelections'>,
+        editor: ViewerId,
         element: HTMLTextAreaElement
     ): void => {
-        editorService.setSelections(editor, EditorTextFieldUtils.getEditorDataFromElement(element).selections)
+        viewerService.setSelections(editor, EditorTextFieldUtils.getEditorDataFromElement(element).selections)
     },
 
     /**
@@ -58,14 +58,15 @@ export const EditorTextFieldUtils = {
      * model change.
      */
     updateElementOnEditorOrModelChanges: (
-        editorService: Pick<EditorService, 'observeEditorAndModel'>,
-        editor: EditorId,
+        viewerService: Pick<ViewerService, 'observeViewer'>,
+        modelService: Pick<ModelService, 'observeModel'>,
+        editor: ViewerId,
         setValue: (text: string) => void,
-        textAreaRef: React.RefObject<Pick<HTMLTextAreaElement, 'value' | 'setSelectionRange'>>
+        textAreaReference: React.RefObject<Pick<HTMLTextAreaElement, 'value' | 'setSelectionRange'>>
     ): Unsubscribable => {
         const subscriptions = new Subscription()
 
-        const changes = from(editorService.observeEditorAndModel(editor))
+        const changes = observeEditorAndModel(editor, viewerService, modelService)
         const modelTextChanges = changes.pipe(
             map(({ model: { text } }) => text),
             filter(isDefined),
@@ -84,7 +85,7 @@ export const EditorTextFieldUtils = {
                     filter(selections => selections.length !== 0)
                 )
                 .subscribe(selections => {
-                    const textArea = textAreaRef.current
+                    const textArea = textAreaReference.current
                     if (textArea) {
                         const sel = selections[0] // TODO: Only a single selection is supported.
                         const start = positionToOffset(textArea.value, sel.start)
@@ -112,7 +113,7 @@ interface Props
     /**
      * The ID of the editor that this component is backed by.
      */
-    editorId: EditorId['editorId']
+    viewerId: ViewerId['viewerId']
 
     /**
      * The URI of the model that this component is backed by.
@@ -134,13 +135,13 @@ interface Props
  * An HTML textarea that is backed by (and 2-way-synced with) a {@link sourcegraph.CodeEditor}.
  */
 export const EditorTextField: React.FunctionComponent<Props> = ({
-    editorId,
+    viewerId,
     modelUri,
     onValueChange,
-    textAreaRef: _textAreaRef,
+    textAreaRef: _textAreaReference,
     className,
     extensionsController: {
-        services: { editor: editorService, model: modelService },
+        services: { viewer: viewerService, model: modelService },
     },
     onKeyDown: parentOnKeyDown,
     ...textAreaProps
@@ -148,13 +149,14 @@ export const EditorTextField: React.FunctionComponent<Props> = ({
     // The new, preferred React hooks API requires use of lambdas.
     //
 
-    const textAreaRef = _textAreaRef || createRef<HTMLTextAreaElement>()
+    const textAreaReference = _textAreaReference || createRef<HTMLTextAreaElement>()
 
     const [value, setValue] = useState<string>()
     useEffect(() => {
         const subscription = EditorTextFieldUtils.updateElementOnEditorOrModelChanges(
-            editorService,
-            { editorId },
+            viewerService,
+            modelService,
+            { viewerId },
             text => {
                 setValue(text)
 
@@ -163,33 +165,33 @@ export const EditorTextField: React.FunctionComponent<Props> = ({
                     onValueChange(text)
                 }
             },
-            textAreaRef
+            textAreaReference
         )
         return () => subscription.unsubscribe()
-    }, [editorId, editorService, modelService, onValueChange, textAreaRef])
+    }, [viewerId, viewerService, modelService, onValueChange, textAreaReference])
 
     return (
         <textarea
             className={className}
             value={value}
-            onInput={e => {
-                EditorTextFieldUtils.updateModelFromElement(modelService, modelUri, e.currentTarget)
-                EditorTextFieldUtils.updateEditorSelectionFromElement(editorService, { editorId }, e.currentTarget)
+            onInput={event => {
+                EditorTextFieldUtils.updateModelFromElement(modelService, modelUri, event.currentTarget)
+                EditorTextFieldUtils.updateEditorSelectionFromElement(viewerService, { viewerId }, event.currentTarget)
             }}
             // Listen on keyup and keydown to get the cursor position when the cursor moves due to
             // the arrow keys. For a single keypress, keyup is used. If the user holds down the
             // arrow key, keydown lets us get the key repeat for (most) intermediate positions so we
             // can be more responsive to user input instead of waiting for keyup.
-            onKeyDown={e => {
-                EditorTextFieldUtils.updateEditorSelectionFromElement(editorService, { editorId }, e.currentTarget)
-                if (parentOnKeyDown && !e.isPropagationStopped()) {
-                    parentOnKeyDown(e)
+            onKeyDown={event => {
+                EditorTextFieldUtils.updateEditorSelectionFromElement(viewerService, { viewerId }, event.currentTarget)
+                if (parentOnKeyDown && !event.isPropagationStopped()) {
+                    parentOnKeyDown(event)
                 }
             }}
-            onKeyUp={e => {
-                EditorTextFieldUtils.updateEditorSelectionFromElement(editorService, { editorId }, e.currentTarget)
+            onKeyUp={event => {
+                EditorTextFieldUtils.updateEditorSelectionFromElement(viewerService, { viewerId }, event.currentTarget)
             }}
-            ref={textAreaRef}
+            ref={textAreaReference}
             {...textAreaProps}
         />
     )

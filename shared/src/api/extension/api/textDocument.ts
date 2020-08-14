@@ -4,18 +4,30 @@ import { PrefixSumComputer } from '../../../util/prefixSumComputer'
 import { getWordAtText } from '../../../util/wordHelpers'
 
 /** @internal */
-export class ExtDocument implements sourcegraph.TextDocument {
+export class ExtensionDocument implements sourcegraph.TextDocument {
     private _eol: string
     private _lines: string[]
+    public uri: string
+    public languageId: string
+    public text: string | undefined
 
     constructor(private model: Pick<sourcegraph.TextDocument, 'uri' | 'languageId' | 'text'>) {
         this._eol = getEOL(model.text || '')
         this._lines = model.text !== undefined ? model.text.split(this._eol) : []
+        this.uri = this.model.uri
+        this.languageId = this.model.languageId
+        this.text = this.model.text
     }
 
-    public readonly uri = this.model.uri
-    public readonly languageId = this.model.languageId
-    public readonly text = this.model.text
+    public update({ text }: Pick<sourcegraph.TextDocument, 'text'>): void {
+        this.model = {
+            ...this.model,
+            text,
+        }
+        this._eol = getEOL(text || '')
+        this._lines = text !== undefined ? text.split(this._eol) : []
+        this.text = text
+    }
 
     public offsetAt(position: sourcegraph.Position): number {
         this.throwIfNoModelText()
@@ -100,8 +112,8 @@ export class ExtDocument implements sourcegraph.TextDocument {
             const eolLength = this._eol.length
             const linesLength = this._lines.length
             const lineStartValues = new Uint32Array(linesLength)
-            for (let i = 0; i < linesLength; i++) {
-                lineStartValues[i] = this._lines[i].length + eolLength
+            for (let index = 0; index < linesLength; index++) {
+                lineStartValues[index] = this._lines[index].length + eolLength
             }
             this._lineStarts = new PrefixSumComputer(lineStartValues)
         }
@@ -123,15 +135,15 @@ export class ExtDocument implements sourcegraph.TextDocument {
  * Detects the end-of-line character in the text (either \n, \r\n, or \r).
  */
 export function getEOL(text: string): string {
-    for (let i = 0; i < text.length; i++) {
-        const ch = text.charAt(i)
-        if (ch === '\r') {
-            if (i + 1 < text.length && text.charAt(i + 1) === '\n') {
+    for (let index = 0; index < text.length; index++) {
+        const character = text.charAt(index)
+        if (character === '\r') {
+            if (index + 1 < text.length && text.charAt(index + 1) === '\n') {
                 return '\r\n'
             }
             return '\r'
         }
-        if (ch === '\n') {
+        if (character === '\n') {
             return '\n'
         }
     }

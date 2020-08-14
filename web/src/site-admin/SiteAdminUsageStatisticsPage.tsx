@@ -1,5 +1,4 @@
 import format from 'date-fns/format'
-import { upperFirst } from 'lodash'
 import * as React from 'react'
 import { RouteComponentProps } from 'react-router'
 import { Subscription } from 'rxjs'
@@ -11,17 +10,15 @@ import { RadioButtons } from '../components/RadioButtons'
 import { Timestamp } from '../components/time/Timestamp'
 import { eventLogger } from '../tracking/eventLogger'
 import { fetchSiteUsageStatistics, fetchUserUsageStatistics } from './backend'
+import { ErrorAlert } from '../components/alerts'
+import FileDownloadIcon from 'mdi-react/FileDownloadIcon'
 
 interface ChartData {
     label: string
     dateFormat: string
 }
 
-interface ChartOptions {
-    daus: ChartData
-    waus: ChartData
-    maus: ChartData
-}
+type ChartOptions = Record<'daus' | 'waus' | 'maus', ChartData>
 
 const chartGeneratorOptions: ChartOptions = {
     daus: { label: 'Daily unique users', dateFormat: 'E, MMM d' },
@@ -48,14 +45,14 @@ export const UsageChart: React.FunctionComponent<UsageChartPageProps> = (props: 
             width={500}
             height={200}
             isLightTheme={props.isLightTheme}
-            data={props.stats[props.chartID].map(p => ({
+            data={props.stats[props.chartID].map(usagePeriod => ({
                 xLabel: format(
-                    Date.parse(p.startTime) + 1000 * 60 * 60 * 24,
+                    Date.parse(usagePeriod.startTime) + 1000 * 60 * 60 * 24,
                     chartGeneratorOptions[props.chartID].dateFormat
                 ),
                 yValues: {
-                    Registered: p.registeredUserCount,
-                    Anonymous: p.anonymousUserCount,
+                    Registered: usagePeriod.registeredUserCount,
+                    Anonymous: usagePeriod.anonymousUserCount,
                 },
             }))}
         />
@@ -96,19 +93,20 @@ class UserUsageStatisticsFooter extends React.PureComponent<UserUsageStatisticsH
                     <th>Total</th>
                     <td>
                         {this.props.nodes.reduce(
-                            (c, v) => c + (v.usageStatistics ? v.usageStatistics.pageViews : 0),
+                            (count, node) => count + (node.usageStatistics ? node.usageStatistics.pageViews : 0),
                             0
                         )}
                     </td>
                     <td>
                         {this.props.nodes.reduce(
-                            (c, v) => c + (v.usageStatistics ? v.usageStatistics.searchQueries : 0),
+                            (count, node) => count + (node.usageStatistics ? node.usageStatistics.searchQueries : 0),
                             0
                         )}
                     </td>
                     <td>
                         {this.props.nodes.reduce(
-                            (c, v) => c + (v.usageStatistics ? v.usageStatistics.codeIntelligenceActions : 0),
+                            (count, node) =>
+                                count + (node.usageStatistics ? node.usageStatistics.codeIntelligenceActions : 0),
                             0
                         )}
                     </td>
@@ -138,18 +136,17 @@ class UserUsageStatisticsNode extends React.PureComponent<UserUsageStatisticsNod
                     {this.props.node.usageStatistics ? this.props.node.usageStatistics.codeIntelligenceActions : 'n/a'}
                 </td>
                 <td className="site-admin-usage-statistics-page__date-column">
-                    {this.props.node.usageStatistics && this.props.node.usageStatistics.lastActiveTime ? (
+                    {this.props.node.usageStatistics?.lastActiveTime ? (
                         <Timestamp date={this.props.node.usageStatistics.lastActiveTime} />
                     ) : (
-                        'n/a'
+                        'never'
                     )}
                 </td>
                 <td className="site-admin-usage-statistics-page__date-column">
-                    {this.props.node.usageStatistics &&
-                    this.props.node.usageStatistics.lastActiveCodeHostIntegrationTime ? (
+                    {this.props.node.usageStatistics?.lastActiveCodeHostIntegrationTime ? (
                         <Timestamp date={this.props.node.usageStatistics.lastActiveCodeHostIntegrationTime} />
                     ) : (
-                        'n/a'
+                        'never'
                     )}
                 </td>
             </tr>
@@ -185,7 +182,7 @@ export const USER_ACTIVITY_FILTERS: FilteredConnectionFilter[] = [
     },
 ]
 
-interface SiteAdminUsageStatisticsPageProps extends RouteComponentProps<any> {
+interface SiteAdminUsageStatisticsPageProps extends RouteComponentProps<{}> {
     isLightTheme: boolean
 }
 
@@ -218,7 +215,10 @@ export class SiteAdminUsageStatisticsPage extends React.Component<
         eventLogger.logViewEvent('SiteAdminUsageStatistics')
 
         this.subscriptions.add(
-            fetchSiteUsageStatistics().subscribe(stats => this.setState({ stats }), error => this.setState({ error }))
+            fetchSiteUsageStatistics().subscribe(
+                stats => this.setState({ stats }),
+                error => this.setState({ error })
+            )
         )
     }
 
@@ -234,15 +234,25 @@ export class SiteAdminUsageStatisticsPage extends React.Component<
         return (
             <div className="site-admin-usage-statistics-page">
                 <PageTitle title="Usage statistics - Admin" />
-                <div className="d-flex justify-content-between align-items-center mt-3 mb-1">
-                    <h2 className="mb-0">Usage statistics</h2>
-                </div>
-                {this.state.error && <p className="alert alert-danger">{upperFirst(this.state.error.message)}</p>}
+                <h2>Usage statistics</h2>
+                {this.state.error && (
+                    <ErrorAlert className="mb-3" error={this.state.error} history={this.props.history} />
+                )}
+
+                <a
+                    href="/site-admin/usage-statistics/archive"
+                    className="btn btn-secondary"
+                    data-tooltip="Download usage stats archive"
+                    download="true"
+                >
+                    <FileDownloadIcon className="icon-inline" /> Download usage stats archive
+                </a>
+
                 {this.state.stats && (
                     <>
                         <RadioButtons
-                            nodes={Object.entries(chartGeneratorOptions).map(([key, opt]) => ({
-                                label: opt.label,
+                            nodes={Object.entries(chartGeneratorOptions).map(([key, { label }]) => ({
+                                label,
                                 id: key,
                             }))}
                             onChange={this.onChartIndexChange}
@@ -273,8 +283,8 @@ export class SiteAdminUsageStatisticsPage extends React.Component<
         )
     }
 
-    private onChartIndexChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        switch (e.target.value as keyof ChartOptions) {
+    private onChartIndexChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
+        switch (event.target.value as keyof ChartOptions) {
             case 'daus':
                 eventLogger.log('DAUsChartSelected')
                 break
@@ -285,6 +295,6 @@ export class SiteAdminUsageStatisticsPage extends React.Component<
                 eventLogger.log('MAUsChartSelected')
                 break
         }
-        this.setState({ chartID: e.target.value as keyof ChartOptions })
+        this.setState({ chartID: event.target.value as keyof ChartOptions })
     }
 }

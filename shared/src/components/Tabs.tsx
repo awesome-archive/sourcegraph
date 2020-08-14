@@ -2,6 +2,7 @@ import * as H from 'history'
 import * as React from 'react'
 import { parseHash } from '../util/url'
 import { Link } from './Link'
+import classNames from 'classnames'
 
 /**
  * Describes a tab.
@@ -52,16 +53,22 @@ class TabBar<ID extends string, T extends Tab<ID>> extends React.PureComponent<T
             <div className={`tab-bar ${this.props.tabs.length === 0 ? 'tab-bar--empty' : ''}`}>
                 {this.props.tabs
                     .filter(({ hidden }) => !hidden)
-                    .map((tab, i) => (
+                    .map(tab => (
                         <this.props.tabComponent
                             key={tab.id}
                             tab={tab}
-                            className={`btn btn-link btn-sm tab-bar__tab ${!this.props.endFragment &&
-                                'tab-bar__tab--flex-grow'} tab-bar__tab--${
-                                this.props.activeTab !== undefined && this.props.activeTab === tab.id
-                                    ? 'active'
-                                    : 'inactive'
-                            } ${this.props.tabClassName || ''}`}
+                            className={classNames(
+                                'btn',
+                                'btn-link',
+                                'btn-sm',
+                                'tab-bar__tab',
+                                !this.props.endFragment && 'tab-bar__tab--flex-grow',
+                                'tab-bar__tab--' +
+                                    (this.props.activeTab !== undefined && this.props.activeTab === tab.id
+                                        ? 'active'
+                                        : 'inactive'),
+                                this.props.tabClassName
+                            )}
                         />
                     ))}
                 {this.props.endFragment}
@@ -145,7 +152,7 @@ class Tabs<ID extends string, T extends Tab<ID>> extends React.PureComponent<
                     tabComponent={this.props.tabComponent}
                 />
                 {this.props.toolbarFragment && <div className="tabs__toolbar small">{this.props.toolbarFragment}</div>}
-                {children && children.find(c => c && c.key === this.props.activeTab)}
+                {children?.find(child => child && child.key === this.props.activeTab)}
             </div>
         )
     }
@@ -202,7 +209,7 @@ export class TabsWithLocalStorageViewStatePersistence<ID extends string, T exten
         )
     }
 
-    private onSelectTab = (tab: ID) => {
+    private onSelectTab = (tab: ID): void => {
         if (this.props.onSelectTab) {
             this.props.onSelectTab(tab)
         }
@@ -212,7 +219,7 @@ export class TabsWithLocalStorageViewStatePersistence<ID extends string, T exten
     }
 
     private renderTab = ({ tab, className }: { tab: T; className: string }): JSX.Element => (
-        <button type="button" className={className} data-e2e-tab={tab.id} onClick={() => this.onSelectTab(tab.id)}>
+        <button type="button" className={className} data-test-tab={tab.id} onClick={() => this.onSelectTab(tab.id)}>
             {tab.label}
         </button>
     )
@@ -260,10 +267,7 @@ export class TabsWithURLViewStatePersistence<ID extends string, T extends Tab<ID
         }
         return {
             ...location,
-            hash: hash
-                .toString()
-                .replace(/%3A/g, ':')
-                .replace(/=$/, ''), // remove needless trailing `=` as in `#L12=`,
+            hash: hash.toString().replace(/%3A/g, ':').replace(/=$/, ''), // remove needless trailing `=` as in `#L12=`,
         }
     }
 
@@ -282,8 +286,8 @@ export class TabsWithURLViewStatePersistence<ID extends string, T extends Tab<ID
         return tabs[0].id // default
     }
 
-    public componentDidUpdate(prevProps: TabsWithURLViewStatePersistenceProps<ID, T>): void {
-        if (prevProps.location !== this.props.location || prevProps.tabs !== this.props.tabs) {
+    public componentDidUpdate(previousProps: TabsWithURLViewStatePersistenceProps<ID, T>): void {
+        if (previousProps.location !== this.props.location || previousProps.tabs !== this.props.tabs) {
             // eslint-disable-next-line react/no-did-update-set-state
             this.setState({
                 activeTab: TabsWithURLViewStatePersistence.readFromURL(this.props.location, this.props.tabs),

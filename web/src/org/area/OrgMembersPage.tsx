@@ -1,4 +1,3 @@
-import { upperFirst } from 'lodash'
 import * as React from 'react'
 import { RouteComponentProps } from 'react-router'
 import { Link } from 'react-router-dom'
@@ -15,6 +14,8 @@ import { userURL } from '../../user'
 import { removeUserFromOrganization } from '../backend'
 import { InviteForm } from '../invite/InviteForm'
 import { OrgAreaPageProps } from './OrgArea'
+import { ErrorAlert } from '../../components/alerts'
+import * as H from 'history'
 
 interface UserNodeProps {
     /** The user to display in this list item. */
@@ -28,6 +29,7 @@ interface UserNodeProps {
 
     /** Called when the user is updated by an action in this list item. */
     onDidUpdate?: () => void
+    history: H.History
 }
 
 interface UserNodeState {
@@ -59,7 +61,7 @@ class UserNode extends React.PureComponent<UserNodeProps, UserNodeState> {
                     switchMap(() =>
                         removeUserFromOrganization({ user: this.props.node.id, organization: this.props.org.id }).pipe(
                             catchError(error => [asError(error)]),
-                            map(c => ({ removalOrError: c || null })),
+                            map(removalOrError => ({ removalOrError: removalOrError || null })),
                             tap(() => {
                                 if (this.props.onDidUpdate) {
                                     this.props.onDidUpdate()
@@ -112,16 +114,18 @@ class UserNode extends React.PureComponent<UserNodeProps, UserNodeState> {
                     </div>
                 </div>
                 {isErrorLike(this.state.removalOrError) && (
-                    <div className="alert alert-danger mt-2">{upperFirst(this.state.removalOrError.message)}</div>
+                    <ErrorAlert className="mt-2" error={this.state.removalOrError} history={this.props.history} />
                 )}
             </li>
         )
     }
 
-    private remove = () => this.removes.next()
+    private remove = (): void => this.removes.next()
 }
 
-interface Props extends OrgAreaPageProps, RouteComponentProps<{}> {}
+interface Props extends OrgAreaPageProps, RouteComponentProps<{}> {
+    history: H.History
+}
 
 interface State {
     /**
@@ -146,7 +150,7 @@ export class OrgMembersPage extends React.PureComponent<Props, State> {
     }
 
     public componentDidMount(): void {
-        eventLogger.logViewEvent('OrgMembers', { organization: { org_name: this.props.org.name } })
+        eventLogger.logViewEvent('OrgMembers')
 
         this.subscriptions.add(
             this.componentUpdates
@@ -170,10 +174,11 @@ export class OrgMembersPage extends React.PureComponent<Props, State> {
     }
 
     public render(): JSX.Element | null {
-        const nodeProps: Pick<UserNodeProps, 'org' | 'authenticatedUser' | 'onDidUpdate'> = {
+        const nodeProps: Omit<UserNodeProps, 'node'> = {
             org: { ...this.props.org, viewerCanAdminister: this.state.viewerCanAdminister },
             authenticatedUser: this.props.authenticatedUser,
             onDidUpdate: this.onDidUpdateUser,
+            history: this.props.history,
         }
 
         return (
@@ -185,9 +190,10 @@ export class OrgMembersPage extends React.PureComponent<Props, State> {
                         authenticatedUser={this.props.authenticatedUser}
                         onOrganizationUpdate={this.props.onOrganizationUpdate}
                         onDidUpdateOrganizationMembers={this.onDidUpdateOrganizationMembers}
+                        history={this.props.history}
                     />
                 )}
-                <FilteredConnection<GQL.IUser, Pick<UserNodeProps, 'org' | 'authenticatedUser' | 'onDidUpdate'>>
+                <FilteredConnection<GQL.IUser, Omit<UserNodeProps, 'node'>>
                     className="list-group list-group-flush mt-3"
                     noun="member"
                     pluralNoun="members"
@@ -204,9 +210,9 @@ export class OrgMembersPage extends React.PureComponent<Props, State> {
         )
     }
 
-    private onDidUpdateUser = () => this.userUpdates.next()
+    private onDidUpdateUser = (): void => this.userUpdates.next()
 
-    private onDidUpdateOrganizationMembers = () => this.userUpdates.next()
+    private onDidUpdateOrganizationMembers = (): void => this.userUpdates.next()
 
     private fetchOrgMembers = (): Observable<GQL.IUserConnection> =>
         queryGraphQL(

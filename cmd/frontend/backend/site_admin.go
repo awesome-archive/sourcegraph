@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
-	"github.com/sourcegraph/sourcegraph/pkg/actor"
-	"github.com/sourcegraph/sourcegraph/pkg/errcode"
+	"github.com/sourcegraph/sourcegraph/internal/actor"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/errcode"
 )
 
 var ErrMustBeSiteAdmin = errors.New("must be site admin")
@@ -18,7 +18,7 @@ func CheckCurrentUserIsSiteAdmin(ctx context.Context) error {
 	if hasAuthzBypass(ctx) {
 		return nil
 	}
-	user, err := currentUser(ctx)
+	user, err := CurrentUser(ctx)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,8 @@ type InsufficientAuthorizationError struct {
 	Message string
 }
 
-func (e *InsufficientAuthorizationError) Error() string { return e.Message }
+func (e *InsufficientAuthorizationError) Error() string      { return e.Message }
+func (e *InsufficientAuthorizationError) Unauthorized() bool { return true }
 
 // CheckSiteAdminOrSameUser returns an error if the user is NEITHER (1) a
 // site admin NOR (2) the user specified by subjectUserID.
@@ -84,7 +85,9 @@ func CheckSiteAdminOrSameUser(ctx context.Context, subjectUserID int32) error {
 	return &InsufficientAuthorizationError{fmt.Sprintf("must be authenticated as %s or as an admin (%s)", subjectUser.Username, isSiteAdminErr.Error())}
 }
 
-func currentUser(ctx context.Context) (*types.User, error) {
+// CurrentUser gets the current authenticated user
+// It returns nil, nil if no user is found
+func CurrentUser(ctx context.Context) (*types.User, error) {
 	user, err := db.Users.GetByCurrentAuthUser(ctx)
 	if err != nil {
 		if errcode.IsNotFound(err) || err == db.ErrNoCurrentUser {

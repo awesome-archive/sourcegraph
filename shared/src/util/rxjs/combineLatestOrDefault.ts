@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-use-before-define */
+/* eslint rxjs/no-internal: warn */
 import { Observable, ObservableInput, of, Operator, PartialObserver, Subscriber, TeardownLogic, zip } from 'rxjs'
 import { fromArray } from 'rxjs/internal/observable/fromArray'
 import { OuterSubscriber } from 'rxjs/internal/OuterSubscriber'
@@ -71,8 +72,8 @@ class CombineLatestSubscriber<T> extends OuterSubscriber<T, T[]> {
 
     protected _complete(): void {
         this.activeObservables = this.observables.length
-        for (let i = 0; i < this.observables.length; i++) {
-            this.add(subscribeToResult(this, this.observables[i], this.observables[i], i))
+        for (let index = 0; index < this.observables.length; index++) {
+            this.add(subscribeToResult(this, this.observables[index], this.observables[index], index))
         }
     }
 

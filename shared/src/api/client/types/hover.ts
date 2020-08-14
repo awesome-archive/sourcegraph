@@ -1,56 +1,39 @@
 import { MarkupKind } from '@sourcegraph/extension-api-classes'
 import { Hover as PlainHover, Range } from '@sourcegraph/extension-api-types'
-import { Hover, MarkupContent } from 'sourcegraph'
+import { Badged, Hover, MarkupContent, HoverAlert } from 'sourcegraph'
 
 /** A hover that is merged from multiple Hover results and normalized. */
 export interface HoverMerged {
-    /**
-     * @todo Make this type *just* {@link MarkupContent} when all consumers are updated.
-     */
-    contents: MarkupContent[]
-
+    contents: Badged<MarkupContent>[]
+    alerts?: Badged<HoverAlert>[]
     range?: Range
 }
 
 /** Create a merged hover from the given individual hovers. */
-export function fromHoverMerged(values: (Hover | PlainHover | null | undefined)[]): HoverMerged | null {
+export function fromHoverMerged(values: (Badged<Hover | PlainHover> | null | undefined)[]): HoverMerged | null {
     const contents: HoverMerged['contents'] = []
+    const alerts: HoverMerged['alerts'] = []
     let range: Range | undefined
     for (const result of values) {
         if (result) {
-            if (result.contents && result.contents.value) {
+            if (result.contents?.value) {
                 contents.push({
                     value: result.contents.value,
                     kind: result.contents.kind || MarkupKind.PlainText,
+                    badge: result.badge,
                 })
             }
-            const __backcompatContents = result.__backcompatContents
-            if (__backcompatContents) {
-                for (const content of Array.isArray(__backcompatContents)
-                    ? __backcompatContents
-                    : [__backcompatContents]) {
-                    if (typeof content === 'string') {
-                        if (content) {
-                            contents.push({ value: content, kind: MarkupKind.Markdown })
-                        }
-                    } else if ('language' in content) {
-                        if (content.language && content.value) {
-                            contents.push({
-                                value: toMarkdownCodeBlock(content.language, content.value),
-                                kind: MarkupKind.Markdown,
-                            })
-                        }
-                    }
-                }
+            if (result.alerts) {
+                alerts.push(...result.alerts)
             }
             if (result.range && !range) {
                 range = result.range
             }
         }
     }
-    return contents.length === 0 ? null : range ? { contents, range } : { contents }
-}
 
-function toMarkdownCodeBlock(language: string, value: string): string {
-    return '```' + language + '\n' + value + '\n```\n'
+    if (contents.length === 0) {
+        return null
+    }
+    return range ? { contents, alerts, range } : { contents, alerts }
 }

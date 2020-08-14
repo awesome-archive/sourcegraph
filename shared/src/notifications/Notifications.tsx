@@ -6,9 +6,9 @@ import { NotificationType } from '../api/client/services/notifications'
 import { ExtensionsControllerProps } from '../extensions/controller'
 import { asError } from '../util/errors'
 import { Notification } from './notification'
-import { NotificationItem } from './NotificationItem'
+import { NotificationItem, NotificationClassNameProps } from './NotificationItem'
 
-interface Props extends ExtensionsControllerProps {}
+interface Props extends ExtensionsControllerProps, NotificationClassNameProps {}
 
 interface State {
     notifications: (Notification & { id: string })[]
@@ -33,10 +33,10 @@ export class Notifications extends React.PureComponent<Props, State> {
     public componentDidMount(): void {
         this.subscriptions.add(
             this.props.extensionsController.notifications
-                .pipe(map(n => ({ ...n, id: uniqueId('n') })))
+                .pipe(map(notification => ({ ...notification, id: uniqueId('n') })))
                 .subscribe(notification => {
-                    this.setState(prevState => ({
-                        notifications: [...prevState.notifications.slice(-Notifications.MAX_RETAIN), notification],
+                    this.setState(previousState => ({
+                        notifications: [...previousState.notifications.slice(-Notifications.MAX_RETAIN), notification],
                     }))
                     if (notification.progress) {
                         // Remove once progress is finished
@@ -46,24 +46,28 @@ export class Notifications extends React.PureComponent<Props, State> {
                                     takeWhile(({ percentage }) => !percentage || percentage < 100),
                                     delay(1000)
                                 )
-                                // tslint:disable-next-line: rxjs-no-nested-subscribe
+                                // eslint-disable-next-line rxjs/no-nested-subscribe
                                 .subscribe({
-                                    error: err => {
+                                    error: error => {
+                                        const erroredNotification = notification
                                         this.setState(({ notifications }) => ({
-                                            notifications: notifications.map(n =>
-                                                n === notification
+                                            notifications: notifications.map(notification =>
+                                                notification === erroredNotification
                                                     ? {
-                                                          ...n,
+                                                          ...notification,
                                                           type: NotificationType.Error,
-                                                          message: asError(err).message,
+                                                          message: asError(error).message,
                                                       }
-                                                    : n
+                                                    : notification
                                             ),
                                         }))
                                     },
                                     complete: () => {
-                                        this.setState(prevState => ({
-                                            notifications: prevState.notifications.filter(n => n !== notification),
+                                        const completedNotification = notification
+                                        this.setState(previousState => ({
+                                            notifications: previousState.notifications.filter(
+                                                notification => notification !== completedNotification
+                                            ),
                                         }))
                                     },
                                 })
@@ -86,13 +90,16 @@ export class Notifications extends React.PureComponent<Props, State> {
                         notification={notification}
                         onDismiss={this.onDismiss}
                         className="sourcegraph-notifications__notification m-2"
+                        notificationClassNames={this.props.notificationClassNames}
                     />
                 ))}
             </div>
         )
     }
 
-    private onDismiss = (notification: Notification) => {
-        this.setState(prevState => ({ notifications: prevState.notifications.filter(n => n !== notification) }))
+    private onDismiss = (dismissedNotification: Notification): void => {
+        this.setState(previousState => ({
+            notifications: previousState.notifications.filter(notification => notification !== dismissedNotification),
+        }))
     }
 }

@@ -1,5 +1,4 @@
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import { upperFirst } from 'lodash'
 import AlertCircleIcon from 'mdi-react/AlertCircleIcon'
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
 import * as React from 'react'
@@ -11,14 +10,16 @@ import { gql } from '../../../../shared/src/graphql/graphql'
 import * as GQL from '../../../../shared/src/graphql/schema'
 import { PlatformContextProps } from '../../../../shared/src/platform/context'
 import { SettingsCascadeProps } from '../../../../shared/src/settings/settings'
-import { createAggregateError, ErrorLike, isErrorLike } from '../../../../shared/src/util/errors'
+import { createAggregateError, ErrorLike, isErrorLike, asError } from '../../../../shared/src/util/errors'
 import { queryGraphQL } from '../../backend/graphql'
 import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { HeroPage } from '../../components/HeroPage'
-import { ThemeProps } from '../../theme'
 import { RouteDescriptor } from '../../util/contributions'
 import { ExtensionsAreaRouteContext } from '../ExtensionsArea'
 import { ExtensionAreaHeader, ExtensionAreaHeaderNavItem } from './ExtensionAreaHeader'
+import { ThemeProps } from '../../../../shared/src/theme'
+import { ErrorMessage } from '../../components/alerts'
+import { TelemetryProps } from '../../../../shared/src/telemetry/telemetryService'
 
 export const registryExtensionFragment = gql`
     fragment RegistryExtensionFields on RegistryExtension {
@@ -64,7 +65,8 @@ export interface ExtensionAreaRoute extends RouteDescriptor<ExtensionAreaRouteCo
 export interface ExtensionAreaProps
     extends ExtensionsAreaRouteContext,
         RouteComponentProps<{ extensionID: string }>,
-        ThemeProps {
+        ThemeProps,
+        TelemetryProps {
     routes: readonly ExtensionAreaRoute[]
     extensionAreaHeaderNavItems: readonly ExtensionAreaHeaderNavItem[]
 }
@@ -77,7 +79,11 @@ interface ExtensionAreaState {
 /**
  * Properties passed to all page components in the registry extension area.
  */
-export interface ExtensionAreaRouteContext extends SettingsCascadeProps, PlatformContextProps, ThemeProps {
+export interface ExtensionAreaRouteContext
+    extends SettingsCascadeProps,
+        PlatformContextProps,
+        ThemeProps,
+        TelemetryProps {
     /** The extension registry area main URL. */
     url: string
 
@@ -132,8 +138,8 @@ export class ExtensionArea extends React.Component<ExtensionAreaProps> {
                     switchMap(([extensionID, forceRefresh]) => {
                         type PartialStateUpdate = Pick<ExtensionAreaState, 'extensionOrError'>
                         return queryExtension(extensionID).pipe(
-                            catchError(error => [error]),
-                            map((c): PartialStateUpdate => ({ extensionOrError: c })),
+                            catchError((error): [ErrorLike] => [asError(error)]),
+                            map((extensionOrError): PartialStateUpdate => ({ extensionOrError })),
 
                             // Don't clear old data while we reload, to avoid unmounting all components during
                             // loading.
@@ -141,7 +147,10 @@ export class ExtensionArea extends React.Component<ExtensionAreaProps> {
                         )
                     })
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), err => console.error(err))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate),
+                    error => console.error(error)
+                )
         )
 
         this.componentUpdates.next(this.props)
@@ -164,7 +173,7 @@ export class ExtensionArea extends React.Component<ExtensionAreaProps> {
                 <HeroPage
                     icon={AlertCircleIcon}
                     title="Error"
-                    subtitle={upperFirst(this.state.extensionOrError.message)}
+                    subtitle={<ErrorMessage error={this.state.extensionOrError} history={this.props.history} />}
                 />
             )
         }
@@ -180,6 +189,7 @@ export class ExtensionArea extends React.Component<ExtensionAreaProps> {
             extension: this.state.extensionOrError,
             platformContext: this.props.platformContext,
             isLightTheme: this.props.isLightTheme,
+            telemetryService: this.props.telemetryService,
         }
 
         return (
@@ -218,10 +228,10 @@ export class ExtensionArea extends React.Component<ExtensionAreaProps> {
         )
     }
 
-    private onDidUpdateExtension = () => this.refreshRequests.next()
+    private onDidUpdateExtension = (): void => this.refreshRequests.next()
 }
 
-function queryExtension(extensionID: string): Observable<ConfiguredRegistryExtension> {
+function queryExtension(extensionID: string): Observable<ConfiguredRegistryExtension<GQL.IRegistryExtension>> {
     return queryGraphQL(
         gql`
             query RegistryExtension($extensionID: String!) {

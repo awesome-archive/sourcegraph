@@ -8,10 +8,14 @@ import * as GQL from '../../../../../shared/src/graphql/schema'
 import { asError, createAggregateError, ErrorLike, isErrorLike } from '../../../../../shared/src/util/errors'
 import { queryGraphQL } from '../../../backend/graphql'
 import { ExtensionsExploreSectionExtensionCard } from './ExtensionsExploreSectionExtensionCard'
+import { ErrorAlert } from '../../../components/alerts'
+import * as H from 'history'
 
-interface Props {}
+interface Props {
+    history: H.History
+}
 
-const LOADING: 'loading' = 'loading'
+const LOADING = 'loading' as const
 
 interface State {
     /** The extensions, loading, or an error. */
@@ -44,7 +48,7 @@ export class ExtensionsExploreSection extends React.PureComponent<Props, State> 
                 first: ExtensionsExploreSection.QUERY_EXTENSIONS_ARG_FIRST,
                 prioritizeExtensionIDs: ExtensionsExploreSection.QUERY_EXTENSIONS_ARG_EXTENSION_IDS,
             })
-                .pipe(catchError(err => [asError(err)]))
+                .pipe(catchError(error => [asError(error)]))
                 .subscribe(extensionsOrError => this.setState({ extensionsOrError }))
         )
     }
@@ -56,7 +60,7 @@ export class ExtensionsExploreSection extends React.PureComponent<Props, State> 
     public render(): JSX.Element | null {
         const extensionsOrError: (typeof LOADING | GQL.IRegistryExtension)[] | ErrorLike =
             this.state.extensionsOrError === LOADING
-                ? Array(ExtensionsExploreSection.QUERY_EXTENSIONS_ARG_FIRST).fill(LOADING)
+                ? new Array(ExtensionsExploreSection.QUERY_EXTENSIONS_ARG_FIRST).fill(LOADING)
                 : isErrorLike(this.state.extensionsOrError)
                 ? this.state.extensionsOrError
                 : this.state.extensionsOrError.nodes
@@ -65,19 +69,19 @@ export class ExtensionsExploreSection extends React.PureComponent<Props, State> 
             <div className="card">
                 <h3 className="card-header">Top Sourcegraph extensions</h3>
                 {isErrorLike(extensionsOrError) ? (
-                    <div className="alert alert-danger">Error: {extensionsOrError.message}</div>
+                    <ErrorAlert error={extensionsOrError} history={this.props.history} />
                 ) : extensionsOrError.length === 0 ? (
                     <p>No extensions are available.</p>
                 ) : (
                     <div className="list-group list-group-flush">
                         {extensionsOrError
                             .slice(0, ExtensionsExploreSection.QUERY_EXTENSIONS_ARG_FIRST)
-                            .filter((e): e is GQL.IRegistryExtension => e !== LOADING)
-                            .map((extension, i) => (
+                            .filter((extension): extension is GQL.IRegistryExtension => extension !== LOADING)
+                            .map(extension => (
                                 <ExtensionsExploreSectionExtensionCard
                                     key={extension.id}
                                     extensionID={extension.extensionIDWithoutRegistry}
-                                    description={(extension.manifest && extension.manifest.description) || undefined}
+                                    description={extension.manifest?.description || undefined}
                                     url={extension.url}
                                     className="list-group-item list-group-item-action"
                                 />

@@ -1,6 +1,6 @@
 import { createHoverifier, HoveredToken, Hoverifier, HoverState } from '@sourcegraph/codeintellify'
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import { isEqual, upperFirst } from 'lodash'
+import { isEqual } from 'lodash'
 import * as React from 'react'
 import { RouteComponentProps } from 'react-router'
 import { merge, Observable, of, Subject, Subscription } from 'rxjs'
@@ -16,19 +16,28 @@ import { getModeFromPath } from '../../../../shared/src/languages'
 import { PlatformContextProps } from '../../../../shared/src/platform/context'
 import { asError, createAggregateError, ErrorLike, isErrorLike } from '../../../../shared/src/util/errors'
 import { memoizeObservable } from '../../../../shared/src/util/memoizeObservable'
-import { propertyIsDefined } from '../../../../shared/src/util/types'
-import { FileSpec, ModeSpec, PositionSpec, RepoSpec, ResolvedRevSpec, RevSpec } from '../../../../shared/src/util/url'
-import { getHover } from '../../backend/features'
+import { property, isDefined } from '../../../../shared/src/util/types'
+import {
+    FileSpec,
+    ModeSpec,
+    UIPositionSpec,
+    RepoSpec,
+    ResolvedRevisionSpec,
+    RevisionSpec,
+} from '../../../../shared/src/util/url'
+import { getHover, getDocumentHighlights } from '../../backend/features'
 import { queryGraphQL } from '../../backend/graphql'
 import { PageTitle } from '../../components/PageTitle'
 import { WebHoverOverlay } from '../../components/shared'
-import { ThemeProps } from '../../theme'
 import { eventLogger, EventLoggerProps } from '../../tracking/eventLogger'
 import { GitCommitNode } from '../commits/GitCommitNode'
 import { gitCommitFragment } from '../commits/RepositoryCommitsPage'
-import { FileDiffConnection } from '../compare/FileDiffConnection'
-import { FileDiffNode } from '../compare/FileDiffNode'
+import { FileDiffConnection } from '../../components/diff/FileDiffConnection'
+import { FileDiffNode } from '../../components/diff/FileDiffNode'
 import { queryRepositoryComparisonFileDiffs } from '../compare/RepositoryCompareDiffPage'
+import { ThemeProps } from '../../../../shared/src/theme'
+import { ErrorAlert } from '../../components/alerts'
+import { FilteredConnectionQueryArgs } from '../../components/FilteredConnection'
 
 const queryCommit = memoizeObservable(
     (args: { repo: GQL.ID; revspec: string }): Observable<GQL.IGitCommit> =>
@@ -84,24 +93,28 @@ export class RepositoryCommitPage extends React.Component<Props, State> {
 
     /** Emits whenever the ref callback for the hover element is called */
     private hoverOverlayElements = new Subject<HTMLElement | null>()
-    private nextOverlayElement = (element: HTMLElement | null) => this.hoverOverlayElements.next(element)
+    private nextOverlayElement = (element: HTMLElement | null): void => this.hoverOverlayElements.next(element)
 
     /** Emits whenever the ref callback for the hover element is called */
     private repositoryCommitPageElements = new Subject<HTMLElement | null>()
-    private nextRepositoryCommitPageElement = (element: HTMLElement | null) =>
+    private nextRepositoryCommitPageElement = (element: HTMLElement | null): void =>
         this.repositoryCommitPageElements.next(element)
 
     /** Emits when the close button was clicked */
     private closeButtonClicks = new Subject<MouseEvent>()
-    private nextCloseButtonClick = (event: MouseEvent) => this.closeButtonClicks.next(event)
+    private nextCloseButtonClick = (event: MouseEvent): void => this.closeButtonClicks.next(event)
 
     private subscriptions = new Subscription()
-    private hoverifier: Hoverifier<RepoSpec & RevSpec & FileSpec & ResolvedRevSpec, HoverMerged, ActionItemAction>
+    private hoverifier: Hoverifier<
+        RepoSpec & RevisionSpec & FileSpec & ResolvedRevisionSpec,
+        HoverMerged,
+        ActionItemAction
+    >
 
     constructor(props: Props) {
         super(props)
         this.hoverifier = createHoverifier<
-            RepoSpec & RevSpec & FileSpec & ResolvedRevSpec,
+            RepoSpec & RevisionSpec & FileSpec & ResolvedRevisionSpec,
             HoverMerged,
             ActionItemAction
         >({
@@ -115,9 +128,11 @@ export class RepositoryCommitPage extends React.Component<Props, State> {
                     relativeElement: repositoryCommitPageElement!,
                 })),
                 // Can't reposition HoverOverlay if it wasn't rendered
-                filter(propertyIsDefined('hoverOverlayElement'))
+                filter(property('hoverOverlayElement', isDefined))
             ),
             getHover: hoveredToken => getHover(this.getLSPTextDocumentPositionParams(hoveredToken), this.props),
+            getDocumentHighlights: hoveredToken =>
+                getDocumentHighlights(this.getLSPTextDocumentPositionParams(hoveredToken), this.props),
             getActions: context => getHoverActions(this.props, context),
             pinningEnabled: true,
         })
@@ -131,11 +146,11 @@ export class RepositoryCommitPage extends React.Component<Props, State> {
     }
 
     private getLSPTextDocumentPositionParams(
-        hoveredToken: HoveredToken & RepoSpec & RevSpec & FileSpec & ResolvedRevSpec
-    ): RepoSpec & RevSpec & ResolvedRevSpec & FileSpec & PositionSpec & ModeSpec {
+        hoveredToken: HoveredToken & RepoSpec & RevisionSpec & FileSpec & ResolvedRevisionSpec
+    ): RepoSpec & RevisionSpec & ResolvedRevisionSpec & FileSpec & UIPositionSpec & ModeSpec {
         return {
             repoName: hoveredToken.repoName,
-            rev: hoveredToken.rev,
+            revision: hoveredToken.revision,
             filePath: hoveredToken.filePath,
             commitID: hoveredToken.commitID,
             position: hoveredToken,
@@ -157,7 +172,7 @@ export class RepositoryCommitPage extends React.Component<Props, State> {
                             of({ commitOrError: undefined }),
                             queryCommit({ repo: repo.id, revspec: match.params.revspec }).pipe(
                                 catchError(error => [asError(error)]),
-                                map(c => ({ commitOrError: c })),
+                                map(commitOrError => ({ commitOrError })),
                                 tap(({ commitOrError }: { commitOrError: GQL.IGitCommit | ErrorLike }) => {
                                     if (isErrorLike(commitOrError)) {
                                         this.props.onDidUpdateExternalLinks(undefined)
@@ -169,7 +184,10 @@ export class RepositoryCommitPage extends React.Component<Props, State> {
                         )
                     )
                 )
-                .subscribe(stateUpdate => this.setState(stateUpdate), error => console.error(error))
+                .subscribe(
+                    stateUpdate => this.setState(stateUpdate),
+                    error => console.error(error)
+                )
         )
         this.componentUpdates.next(this.props)
     }
@@ -200,7 +218,7 @@ export class RepositoryCommitPage extends React.Component<Props, State> {
                 {this.state.commitOrError === undefined ? (
                     <LoadingSpinner className="icon-inline mt-2" />
                 ) : isErrorLike(this.state.commitOrError) ? (
-                    <div className="alert alert-danger mt-2">Error: {upperFirst(this.state.commitOrError.message)}</div>
+                    <ErrorAlert className="mt-2" error={this.state.commitOrError} history={this.props.history} />
                 ) : (
                     <>
                         <div className="card repository-commit-page__card">
@@ -221,28 +239,33 @@ export class RepositoryCommitPage extends React.Component<Props, State> {
                             nodeComponent={FileDiffNode}
                             nodeComponentProps={{
                                 ...this.props,
-                                base: {
-                                    repoName: this.props.repo.name,
-                                    repoID: this.props.repo.id,
-                                    rev: commitParentOrEmpty(this.state.commitOrError),
-                                    commitID: commitParentOrEmpty(this.state.commitOrError),
-                                },
-                                head: {
-                                    repoName: this.props.repo.name,
-                                    repoID: this.props.repo.id,
-                                    rev: this.state.commitOrError.oid,
-                                    commitID: this.state.commitOrError.oid,
+                                extensionInfo: {
+                                    base: {
+                                        repoName: this.props.repo.name,
+                                        repoID: this.props.repo.id,
+                                        revision: commitParentOrEmpty(this.state.commitOrError),
+                                        commitID: commitParentOrEmpty(this.state.commitOrError),
+                                    },
+                                    head: {
+                                        repoName: this.props.repo.name,
+                                        repoID: this.props.repo.id,
+                                        revision: this.state.commitOrError.oid,
+                                        commitID: this.state.commitOrError.oid,
+                                    },
+                                    hoverifier: this.hoverifier,
+                                    extensionsController: this.props.extensionsController,
                                 },
                                 lineNumbers: true,
-                                hoverifier: this.hoverifier,
                             }}
-                            updateOnChange={`${this.props.repo.id}:${this.state.commitOrError.oid}`}
-                            defaultFirst={25}
+                            updateOnChange={`${this.props.repo.id}:${this.state.commitOrError.oid}:${String(
+                                this.props.isLightTheme
+                            )}`}
+                            defaultFirst={15}
                             hideSearch={true}
                             noSummaryIfAllNodesVisible={true}
                             history={this.props.history}
                             location={this.props.location}
-                            extensionsController={this.props.extensionsController}
+                            cursorPaging={true}
                         />
                     </>
                 )}
@@ -259,12 +282,13 @@ export class RepositoryCommitPage extends React.Component<Props, State> {
         )
     }
 
-    private queryDiffs = (args: { first?: number }): Observable<GQL.IFileDiffConnection> =>
+    private queryDiffs = (args: FilteredConnectionQueryArgs): Observable<GQL.IFileDiffConnection> =>
         queryRepositoryComparisonFileDiffs({
             ...args,
             repo: this.props.repo.id,
             base: commitParentOrEmpty(this.state.commitOrError as GQL.IGitCommit),
             head: (this.state.commitOrError as GQL.IGitCommit).oid,
+            isLightTheme: this.props.isLightTheme,
         })
 }
 

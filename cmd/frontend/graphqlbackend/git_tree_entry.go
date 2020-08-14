@@ -6,43 +6,121 @@ import (
 	neturl "net/url"
 	"os"
 	"path"
-	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/inconshreveable/log15"
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/externallink"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/conf/reposource"
-	"github.com/sourcegraph/sourcegraph/pkg/vcs/git"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/conf/reposource"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/highlight"
+	"github.com/sourcegraph/sourcegraph/internal/trace"
+	"github.com/sourcegraph/sourcegraph/internal/vcs/git"
 	"github.com/sourcegraph/sourcegraph/schema"
-	log15 "gopkg.in/inconshreveable/log15.v2"
 )
 
-// gitTreeEntryResolver resolves an entry in a Git tree in a repository. The entry can be any Git
-// object type that is valid in a tree.
-type gitTreeEntryResolver struct {
-	commit *GitCommitResolver
+var metricLabels = []string{"origin"}
+var codeIntelRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "src_lsif_requests",
+	Help: "Counts LSIF requests.",
+}, metricLabels)
 
-	path string      // this tree entry's path (relative to the root)
-	stat os.FileInfo // this tree entry's file info
-
-	isRecursive bool // whether entries is populated recursively (otherwise just current level of hierarchy)
+func init() {
+	prometheus.MustRegister(codeIntelRequests)
 }
 
-func (r *gitTreeEntryResolver) Path() string { return r.path }
-func (r *gitTreeEntryResolver) Name() string { return path.Base(r.path) }
+// GitTreeEntryResolver resolves an entry in a Git tree in a repository. The entry can be any Git
+// object type that is valid in a tree.
+type GitTreeEntryResolver struct {
+	commit *GitCommitResolver
 
-func (r *gitTreeEntryResolver) ToGitTree() (*gitTreeEntryResolver, bool) { return r, true }
-func (r *gitTreeEntryResolver) ToGitBlob() (*gitTreeEntryResolver, bool) { return r, true }
+	contentOnce sync.Once
+	content     []byte
+	contentErr  error
 
-func (r *gitTreeEntryResolver) Commit() *GitCommitResolver { return r.commit }
+	// stat is this tree entry's file info. Its Name method must return the full path relative to
+	// the root, not the basename.
+	stat os.FileInfo
 
-func (r *gitTreeEntryResolver) Repository() *RepositoryResolver { return r.commit.repo }
+	isRecursive   bool  // whether entries is populated recursively (otherwise just current level of hierarchy)
+	isSingleChild *bool // whether this is the single entry in its parent. Only set by the (&GitTreeEntryResolver) entries.
+}
 
-func (r *gitTreeEntryResolver) IsRecursive() bool { return r.isRecursive }
+func NewGitTreeEntryResolver(commit *GitCommitResolver, stat os.FileInfo) *GitTreeEntryResolver {
+	return &GitTreeEntryResolver{commit: commit, stat: stat}
+}
 
-func (r *gitTreeEntryResolver) URL(ctx context.Context) (string, error) {
+func (r *GitTreeEntryResolver) Path() string { return r.stat.Name() }
+func (r *GitTreeEntryResolver) Name() string { return path.Base(r.stat.Name()) }
+
+func (r *GitTreeEntryResolver) ToGitTree() (*GitTreeEntryResolver, bool) { return r, true }
+func (r *GitTreeEntryResolver) ToGitBlob() (*GitTreeEntryResolver, bool) { return r, true }
+
+func (r *GitTreeEntryResolver) ToVirtualFile() (*virtualFileResolver, bool) { return nil, false }
+
+func (r *GitTreeEntryResolver) ByteSize(ctx context.Context) (int32, error) {
+	content, err := r.Content(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return int32(len([]byte(content))), nil
+}
+
+func (r *GitTreeEntryResolver) Content(ctx context.Context) (string, error) {
+	r.contentOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		cachedRepo, err := backend.CachedGitRepo(ctx, r.commit.repoResolver.repo)
+		if err != nil {
+			r.contentErr = err
+		}
+
+		r.content, r.contentErr = git.ReadFile(ctx, *cachedRepo, api.CommitID(r.commit.OID()), r.Path(), 0)
+	})
+
+	return string(r.content), r.contentErr
+}
+
+func (r *GitTreeEntryResolver) RichHTML(ctx context.Context) (string, error) {
+	content, err := r.Content(ctx)
+	if err != nil {
+		return "", err
+	}
+	return richHTML(content, path.Ext(r.Path()))
+}
+
+func (r *GitTreeEntryResolver) Binary(ctx context.Context) (bool, error) {
+	content, err := r.Content(ctx)
+	if err != nil {
+		return false, err
+	}
+	return highlight.IsBinary([]byte(content)), nil
+}
+
+func (r *GitTreeEntryResolver) Highlight(ctx context.Context, args *HighlightArgs) (*highlightedFileResolver, error) {
+	content, err := r.Content(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return highlightContent(ctx, args, content, r.Path(), highlight.Metadata{
+		RepoName: string(r.commit.repoResolver.repo.Name),
+		Revision: string(r.commit.oid),
+	})
+}
+
+func (r *GitTreeEntryResolver) Commit() *GitCommitResolver { return r.commit }
+
+func (r *GitTreeEntryResolver) Repository() *RepositoryResolver { return r.commit.repoResolver }
+
+func (r *GitTreeEntryResolver) IsRecursive() bool { return r.isRecursive }
+
+func (r *GitTreeEntryResolver) URL(ctx context.Context) (string, error) {
 	if submodule := r.Submodule(); submodule != nil {
 		repoName, err := cloneURLToRepoName(ctx, submodule.URL())
 		if err != nil {
@@ -58,7 +136,7 @@ func (r *gitTreeEntryResolver) URL(ctx context.Context) (string, error) {
 	return r.urlPath(url)
 }
 
-func (r *gitTreeEntryResolver) CanonicalURL() (string, error) {
+func (r *GitTreeEntryResolver) CanonicalURL() (string, error) {
 	url, err := r.commit.canonicalRepoRevURL()
 	if err != nil {
 		return "", err
@@ -66,7 +144,7 @@ func (r *gitTreeEntryResolver) CanonicalURL() (string, error) {
 	return r.urlPath(url)
 }
 
-func (r *gitTreeEntryResolver) urlPath(prefix string) (string, error) {
+func (r *GitTreeEntryResolver) urlPath(prefix string) (string, error) {
 	if r.IsRoot() {
 		return prefix, nil
 	}
@@ -81,17 +159,24 @@ func (r *gitTreeEntryResolver) urlPath(prefix string) (string, error) {
 		typ = "tree"
 	}
 
-	u.Path = path.Join(u.Path, "-", typ, r.path)
+	u.Path = path.Join(u.Path, "-", typ, r.Path())
 	return u.String(), nil
 }
 
-func (r *gitTreeEntryResolver) IsDirectory() bool { return r.stat.Mode().IsDir() }
+func (r *GitTreeEntryResolver) IsDirectory() bool { return r.stat.Mode().IsDir() }
 
-func (r *gitTreeEntryResolver) ExternalURLs(ctx context.Context) ([]*externallink.Resolver, error) {
-	return externallink.FileOrDir(ctx, r.commit.repo.repo, r.commit.inputRevOrImmutableRev(), r.path, r.stat.Mode().IsDir())
+func (r *GitTreeEntryResolver) ExternalURLs(ctx context.Context) ([]*externallink.Resolver, error) {
+	return externallink.FileOrDir(ctx, r.commit.repoResolver.repo, r.commit.inputRevOrImmutableRev(), r.Path(), r.stat.Mode().IsDir())
 }
 
-func (r *gitTreeEntryResolver) Submodule() *gitSubmoduleResolver {
+func (r *GitTreeEntryResolver) RawZipArchiveURL() string {
+	return globals.ExternalURL().ResolveReference(&neturl.URL{
+		Path:     path.Join(r.Repository().URL(), "-/raw/", r.Path()),
+		RawQuery: "format=zip",
+	}).String()
+}
+
+func (r *GitTreeEntryResolver) Submodule() *gitSubmoduleResolver {
 	if submoduleInfo, ok := r.stat.Sys().(git.Submodule); ok {
 		return &gitSubmoduleResolver{submodule: submoduleInfo}
 	}
@@ -126,14 +211,14 @@ func reposourceCloneURLToRepoName(ctx context.Context, cloneURL string) (repoNam
 	// Ideally these could be done in parallel, but the table is small
 	// and I don't think real world perf is going to be bad.
 	// It is also unclear to me if deterministic order is important here (it seems like it might be),
-	// so if this is parallalized in the future, consider whether order is important.
+	// so if this is parallelized in the future, consider whether order is important.
 
 	githubs, err := db.ExternalServices.ListGitHubConnections(ctx)
 	if err != nil {
 		return "", err
 	}
 	for _, c := range githubs {
-		repoSources = append(repoSources, reposource.GitHub{GitHubConnection: c})
+		repoSources = append(repoSources, reposource.GitHub{GitHubConnection: c.GitHubConnection})
 	}
 
 	gitlabs, err := db.ExternalServices.ListGitLabConnections(ctx)
@@ -141,7 +226,7 @@ func reposourceCloneURLToRepoName(ctx context.Context, cloneURL string) (repoNam
 		return "", err
 	}
 	for _, c := range gitlabs {
-		repoSources = append(repoSources, reposource.GitLab{GitLabConnection: c})
+		repoSources = append(repoSources, reposource.GitLab{GitLabConnection: c.GitLabConnection})
 	}
 
 	bitbuckets, err := db.ExternalServices.ListBitbucketServerConnections(ctx)
@@ -149,7 +234,7 @@ func reposourceCloneURLToRepoName(ctx context.Context, cloneURL string) (repoNam
 		return "", err
 	}
 	for _, c := range bitbuckets {
-		repoSources = append(repoSources, reposource.BitbucketServer{BitbucketServerConnection: c})
+		repoSources = append(repoSources, reposource.BitbucketServer{BitbucketServerConnection: c.BitbucketServerConnection})
 	}
 
 	awscodecommits, err := db.ExternalServices.ListAWSCodeCommitConnections(ctx)
@@ -157,7 +242,7 @@ func reposourceCloneURLToRepoName(ctx context.Context, cloneURL string) (repoNam
 		return "", err
 	}
 	for _, c := range awscodecommits {
-		repoSources = append(repoSources, reposource.AWS{AWSCodeCommitConnection: c})
+		repoSources = append(repoSources, reposource.AWS{AWSCodeCommitConnection: c.AWSCodeCommitConnection})
 	}
 
 	gitolites, err := db.ExternalServices.ListGitoliteConnections(ctx)
@@ -165,7 +250,7 @@ func reposourceCloneURLToRepoName(ctx context.Context, cloneURL string) (repoNam
 		return "", err
 	}
 	for _, c := range gitolites {
-		repoSources = append(repoSources, reposource.Gitolite{GitoliteConnection: c})
+		repoSources = append(repoSources, reposource.Gitolite{GitoliteConnection: c.GitoliteConnection})
 	}
 
 	// Fallback for github.com
@@ -185,32 +270,53 @@ func reposourceCloneURLToRepoName(ctx context.Context, cloneURL string) (repoNam
 	return "", nil
 }
 
-func createFileInfo(path string, isDir bool) os.FileInfo {
+func CreateFileInfo(path string, isDir bool) os.FileInfo {
 	return fileInfo{path: path, isDir: isDir}
 }
 
-func (r *gitTreeEntryResolver) IsSingleChild(ctx context.Context, args *gitTreeEntryConnectionArgs) (bool, error) {
+func (r *GitTreeEntryResolver) IsSingleChild(ctx context.Context, args *gitTreeEntryConnectionArgs) (bool, error) {
 	if !r.IsDirectory() {
 		return false, nil
 	}
-	cachedRepo, err := backend.CachedGitRepo(ctx, r.commit.repo.repo)
+	if r.isSingleChild != nil {
+		return *r.isSingleChild, nil
+	}
+	cachedRepo, err := backend.CachedGitRepo(ctx, r.commit.repoResolver.repo)
 	if err != nil {
 		return false, err
 	}
-	entries, err := git.ReadDir(ctx, *cachedRepo, api.CommitID(r.commit.OID()), filepath.Dir(r.path), false)
+	entries, err := git.ReadDir(ctx, *cachedRepo, api.CommitID(r.commit.OID()), path.Dir(r.Path()), false)
 	if err != nil {
 		return false, err
 	}
 	return len(entries) == 1, nil
 }
 
+func (r *GitTreeEntryResolver) LSIF(ctx context.Context, args *struct{ ToolName *string }) (GitBlobLSIFDataResolver, error) {
+	codeIntelRequests.WithLabelValues(trace.RequestOrigin(ctx)).Inc()
+
+	var toolName string
+	if args.ToolName != nil {
+		toolName = *args.ToolName
+	}
+
+	return EnterpriseResolvers.codeIntelResolver.GitBlobLSIFData(ctx, &GitBlobLSIFDataArgs{
+		Repo:      r.Repository().Type(),
+		Commit:    api.CommitID(r.Commit().OID()),
+		Path:      r.Path(),
+		ExactPath: !r.stat.IsDir(),
+		ToolName:  toolName,
+	})
+}
+
 type fileInfo struct {
 	path  string
+	size  int64
 	isDir bool
 }
 
 func (f fileInfo) Name() string { return f.path }
-func (f fileInfo) Size() int64  { return 0 }
+func (f fileInfo) Size() int64  { return f.size }
 func (f fileInfo) IsDir() bool  { return f.isDir }
 func (f fileInfo) Mode() os.FileMode {
 	if f.IsDir() {

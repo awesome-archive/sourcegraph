@@ -2,15 +2,16 @@ import { action } from '@storybook/addon-actions'
 import { storiesOf } from '@storybook/react'
 import * as H from 'history'
 import React from 'react'
-import { setLinkComponent } from '../components/Link'
 import { NOOP_TELEMETRY_SERVICE } from '../telemetry/telemetryService'
 import { ActionItem, ActionItemComponentProps } from './ActionItem'
-import './ActionItem.scss'
+import { NEVER } from 'rxjs'
+import webStyles from '../../../web/src/SourcegraphWebApp.scss'
 
-setLinkComponent(({ to, children, ...props }) => (
-    <a href={to && typeof to !== 'string' ? H.createPath(to) : to} {...props}>
-        {children}
-    </a>
+const { add } = storiesOf('shared/ActionItem', module).addDecorator(story => (
+    <>
+        <style>{webStyles}</style>
+        <div className="p-4">{story()}</div>
+    </>
 ))
 
 const EXTENSIONS_CONTROLLER: ActionItemComponentProps['extensionsController'] = {
@@ -19,6 +20,7 @@ const EXTENSIONS_CONTROLLER: ActionItemComponentProps['extensionsController'] = 
 
 const PLATFORM_CONTEXT: ActionItemComponentProps['platformContext'] = {
     forceUpdateTooltip: () => undefined,
+    settings: NEVER,
 }
 
 const LOCATION: H.Location = { hash: '', pathname: '/', search: '', state: undefined }
@@ -27,8 +29,6 @@ const ICON_URL =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg=='
 
 const onDidExecute = action('onDidExecute')
-
-const { add } = storiesOf('ActionItem', module)
 
 add('noop action', () => (
     <ActionItem

@@ -9,15 +9,28 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 )
 
 // NewFakeSourcer returns a Sourcer which always returns the given error and sources,
 // ignoring the given external services.
 func NewFakeSourcer(err error, srcs ...Source) Sourcer {
-	return func(...*ExternalService) (Sources, error) {
-		return srcs, err
+	return func(svcs ...*ExternalService) (Sources, error) {
+		var errs *multierror.Error
+
+		if err != nil {
+			for _, svc := range svcs {
+				errs = multierror.Append(errs, &SourceError{Err: err, ExtSvc: svc})
+			}
+			if len(svcs) == 0 {
+				errs = multierror.Append(errs, &SourceError{Err: err, ExtSvc: nil})
+			}
+		}
+
+		return srcs, errs.ErrorOrNil()
 	}
 }
 
@@ -36,12 +49,15 @@ func NewFakeSource(svc *ExternalService, err error, rs ...*Repo) *FakeSource {
 
 // ListRepos returns the Repos that FakeSource was instantiated with
 // as well as the error, if any.
-func (s FakeSource) ListRepos(context.Context) ([]*Repo, error) {
-	repos := make([]*Repo, len(s.repos))
-	for i, r := range s.repos {
-		repos[i] = r.With(Opt.RepoSources(s.svc.URN()))
+func (s FakeSource) ListRepos(ctx context.Context, results chan SourceResult) {
+	if s.err != nil {
+		results <- SourceResult{Source: s, Err: s.err}
+		return
 	}
-	return repos, s.err
+
+	for _, r := range s.repos {
+		results <- SourceResult{Source: s, Repo: r.With(Opt.RepoSources(s.svc.URN()))}
+	}
 }
 
 // ExternalServices returns a singleton slice containing the external service.
@@ -56,13 +72,13 @@ type FakeStore struct {
 	GetRepoByNameError          error // error to be returned in GetRepoByName
 	ListReposError              error // error to be returned in ListRepos
 	UpsertReposError            error // error to be returned in UpsertRepos
-	ListAllRepoNamesError       error // error to be returned in ListAllRepoNames
-
-	svcIDSeq  int64
-	repoIDSeq uint32
-	svcByID   map[int64]*ExternalService
-	repoByID  map[uint32]*Repo
-	parent    *FakeStore
+	SetClonedReposError         error // error to be returned in SetClonedRepos
+	CountNotClonedReposError    error // error to be returned in CountNotClonedRepos
+	svcIDSeq                    int64
+	repoIDSeq                   api.RepoID
+	svcByID                     map[int64]*ExternalService
+	repoByID                    map[api.RepoID]*Repo
+	parent                      *FakeStore
 }
 
 // Transact returns a TxStore whose methods operate within the context of a transaction.
@@ -76,7 +92,7 @@ func (s *FakeStore) Transact(ctx context.Context) (TxStore, error) {
 		svcByID[id] = svc.Clone()
 	}
 
-	repoByID := make(map[uint32]*Repo, len(s.repoByID))
+	repoByID := make(map[api.RepoID]*Repo, len(s.repoByID))
 	for _, r := range s.repoByID {
 		clone := r.Clone()
 		repoByID[r.ID] = clone
@@ -88,7 +104,8 @@ func (s *FakeStore) Transact(ctx context.Context) (TxStore, error) {
 		GetRepoByNameError:          s.GetRepoByNameError,
 		ListReposError:              s.ListReposError,
 		UpsertReposError:            s.UpsertReposError,
-		ListAllRepoNamesError:       s.ListAllRepoNamesError,
+		SetClonedReposError:         s.SetClonedReposError,
+		CountNotClonedReposError:    s.CountNotClonedReposError,
 
 		svcIDSeq:  s.svcIDSeq,
 		svcByID:   svcByID,
@@ -137,7 +154,7 @@ func (s FakeStore) ListExternalServices(ctx context.Context, args StoreListExter
 		k := strings.ToLower(svc.Kind)
 
 		if !set[svc] &&
-			((len(kinds) == 0 && k != "phabricator") || kinds[k]) &&
+			((len(kinds) == 0 && k != extsvc.TypePhabricator) || kinds[k]) &&
 			(len(ids) == 0 || ids[svc.ID]) &&
 			!svc.IsDeleted() {
 
@@ -182,6 +199,9 @@ func (s FakeStore) GetRepoByName(ctx context.Context, name string) (*Repo, error
 	}
 
 	for _, r := range s.repoByID {
+		if r.IsDeleted() {
+			continue
+		}
 		if r.Name == name {
 			return r, nil
 		}
@@ -206,7 +226,7 @@ func (s FakeStore) ListRepos(ctx context.Context, args StoreListReposArgs) ([]*R
 		names[strings.ToLower(name)] = true
 	}
 
-	ids := make(map[uint32]bool, len(args.IDs))
+	ids := make(map[api.RepoID]bool, len(args.IDs))
 	for _, id := range args.IDs {
 		ids[id] = true
 	}
@@ -223,6 +243,10 @@ func (s FakeStore) ListRepos(ctx context.Context, args StoreListReposArgs) ([]*R
 			continue
 		}
 
+		if r.IsDeleted() {
+			continue
+		}
+
 		var preds []bool
 		if len(kinds) > 0 {
 			preds = append(preds, kinds[strings.ToLower(r.ExternalRepo.ServiceType)])
@@ -235,6 +259,12 @@ func (s FakeStore) ListRepos(ctx context.Context, args StoreListReposArgs) ([]*R
 		}
 		if len(externalRepos) > 0 {
 			preds = append(preds, externalRepos[r.ExternalRepo])
+		}
+		if args.PrivateOnly {
+			preds = append(preds, r.Private)
+		}
+		if args.ClonedOnly {
+			preds = append(preds, r.Cloned)
 		}
 
 		if (args.UseOr && evalOr(preds...)) || (!args.UseOr && evalAnd(preds...)) {
@@ -251,20 +281,6 @@ func (s FakeStore) ListRepos(ctx context.Context, args StoreListReposArgs) ([]*R
 	}
 
 	return repos, nil
-}
-
-// ListAllRepoNames lists names of all repos in the store
-func (s FakeStore) ListAllRepoNames(ctx context.Context) ([]api.RepoName, error) {
-	if s.ListAllRepoNamesError != nil {
-		return nil, s.ListAllRepoNamesError
-	}
-
-	names := make([]api.RepoName, 0, len(s.repoByID))
-	for _, r := range s.repoByID {
-		names = append(names, api.RepoName(r.Name))
-	}
-
-	return names, nil
 }
 
 func evalOr(bs ...bool) bool {
@@ -295,40 +311,96 @@ func (s *FakeStore) UpsertRepos(ctx context.Context, upserts ...*Repo) error {
 	}
 
 	if s.repoByID == nil {
-		s.repoByID = make(map[uint32]*Repo, len(upserts))
+		s.repoByID = make(map[api.RepoID]*Repo, len(upserts))
 	}
 
-	var deletes, updates, inserts []*Repo
+	var updates, inserts []*Repo
 	for _, r := range upserts {
-		switch {
-		case r.IsDeleted():
-			deletes = append(deletes, r)
-		case r.ID != 0:
+		if r.ID != 0 {
 			updates = append(updates, r)
-		default:
+		} else if r2, ok := s.byExternalID(r.ExternalRepo); ok {
+			r.ID = r2.ID
+			updates = append(updates, r)
+		} else {
 			inserts = append(inserts, r)
 		}
-	}
-
-	for _, r := range deletes {
-		delete(s.repoByID, r.ID)
 	}
 
 	for _, r := range updates {
 		repo := s.repoByID[r.ID]
 		if repo == nil {
-			return errors.Errorf("upserting repo with non-existant ID: id=%v", r.ID)
+			return errors.Errorf("upserting repo with non-existent ID: id=%v", r.ID)
 		}
-		repo.Update(r)
+		// the cloned column shouldn't be modified by UpsertRepos
+		r.Cloned = repo.Cloned
+		s.repoByID[r.ID] = r
 	}
 
 	for _, r := range inserts {
 		s.repoIDSeq++
 		r.ID = s.repoIDSeq
+		// the cloned column shouldn't be modified by UpsertRepos
+		r.Cloned = false
 		s.repoByID[r.ID] = r
 	}
 
 	return s.checkConstraints()
+}
+
+func (s *FakeStore) byExternalID(eid api.ExternalRepoSpec) (*Repo, bool) {
+	for _, r := range s.repoByID {
+		if r.ExternalRepo == eid {
+			return r, true
+		}
+	}
+	return nil, false
+}
+
+// SetClonedRepos sets the cloned field to true for all repos whose name is in the repoNames list
+// and sets it to false for all the other ones.
+func (s *FakeStore) SetClonedRepos(ctx context.Context, repoNames ...string) error {
+	if s.SetClonedReposError != nil {
+		return s.SetClonedReposError
+	}
+
+	for _, r := range s.repoByID {
+		if r.IsDeleted() {
+			continue
+		}
+
+		var found bool
+		for _, repoName := range repoNames {
+			if strings.ToLower(repoName) == strings.ToLower(r.Name) {
+				found = true
+				break
+			}
+		}
+
+		r.Cloned = found
+	}
+
+	return s.checkConstraints()
+}
+
+// CountNotClonedRepos counts the number of repos whose cloned field is true.
+func (s *FakeStore) CountNotClonedRepos(ctx context.Context) (uint64, error) {
+	if s.CountNotClonedReposError != nil {
+		return 0, s.CountNotClonedReposError
+	}
+
+	var count uint64
+
+	for _, r := range s.repoByID {
+		if r.IsDeleted() {
+			continue
+		}
+
+		if !r.Cloned {
+			count++
+		}
+	}
+
+	return count, nil
 }
 
 // checkConstraints ensures the FakeStore has not violated any constraints we
@@ -341,15 +413,18 @@ func (s *FakeStore) checkConstraints() error {
 	seenName := map[string]bool{}
 	seenExternalRepo := map[api.ExternalRepoSpec]bool{}
 	for _, r := range s.repoByID {
+		if seenExternalRepo[r.ExternalRepo] {
+			return errors.Errorf("duplicate external repo spec: %v", r.ExternalRepo)
+		}
+		seenExternalRepo[r.ExternalRepo] = true
+		if r.IsDeleted() {
+			continue
+		}
 		name := strings.ToLower(r.Name)
 		if seenName[name] {
 			return errors.Errorf("duplicate repo name: %s", name)
 		}
 		seenName[name] = true
-		if r.ExternalRepo.IsSet() && seenExternalRepo[r.ExternalRepo] {
-			return errors.Errorf("duplicate external repo spec: %v", r.ExternalRepo)
-		}
-		seenExternalRepo[r.ExternalRepo] = true
 	}
 	return nil
 }
@@ -379,7 +454,7 @@ var Assert = struct {
 			// Exclude auto-generated IDs from equality tests
 			have = append(Repos{}, have...).With(Opt.RepoID(0))
 			if !reflect.DeepEqual(have, want) {
-				t.Errorf("repos: %s", cmp.Diff(have, want))
+				t.Errorf("repos (-want +got): %s", cmp.Diff(want, have))
 			}
 		}
 	},
@@ -391,7 +466,7 @@ var Assert = struct {
 				return ord(want[i], want[j])
 			})
 			if !reflect.DeepEqual(have, want) {
-				t.Errorf("repos: %s", cmp.Diff(have, want))
+				t.Errorf("repos (-want +got): %s", cmp.Diff(want, have))
 			}
 		}
 	},
@@ -402,7 +477,7 @@ var Assert = struct {
 			// Exclude auto-generated IDs from equality tests
 			have = append(ExternalServices{}, have...).With(Opt.ExternalServiceID(0))
 			if !reflect.DeepEqual(have, want) {
-				t.Errorf("external services: %s", cmp.Diff(have, want))
+				t.Errorf("external services (-want +got): %s", cmp.Diff(want, have))
 			}
 		}
 	},
@@ -414,7 +489,7 @@ var Assert = struct {
 				return ord(want[i], want[j])
 			})
 			if !reflect.DeepEqual(have, want) {
-				t.Errorf("external services: %s", cmp.Diff(have, want))
+				t.Errorf("external services (-want +got): %s", cmp.Diff(want, have))
 			}
 		}
 	},
@@ -429,12 +504,11 @@ var Opt = struct {
 	ExternalServiceID         func(int64) func(*ExternalService)
 	ExternalServiceModifiedAt func(time.Time) func(*ExternalService)
 	ExternalServiceDeletedAt  func(time.Time) func(*ExternalService)
-	RepoID                    func(uint32) func(*Repo)
+	RepoID                    func(api.RepoID) func(*Repo)
 	RepoName                  func(string) func(*Repo)
 	RepoCreatedAt             func(time.Time) func(*Repo)
 	RepoModifiedAt            func(time.Time) func(*Repo)
 	RepoDeletedAt             func(time.Time) func(*Repo)
-	RepoEnabled               func(bool) func(*Repo)
 	RepoSources               func(...string) func(*Repo)
 	RepoMetadata              func(interface{}) func(*Repo)
 	RepoExternalID            func(string) func(*Repo)
@@ -456,7 +530,7 @@ var Opt = struct {
 			e.DeletedAt = ts
 		}
 	},
-	RepoID: func(n uint32) func(*Repo) {
+	RepoID: func(n api.RepoID) func(*Repo) {
 		return func(r *Repo) {
 			r.ID = n
 		}
@@ -471,14 +545,12 @@ var Opt = struct {
 			r.CreatedAt = ts
 			r.UpdatedAt = ts
 			r.DeletedAt = time.Time{}
-			r.Enabled = true
 		}
 	},
 	RepoModifiedAt: func(ts time.Time) func(*Repo) {
 		return func(r *Repo) {
 			r.UpdatedAt = ts
 			r.DeletedAt = time.Time{}
-			r.Enabled = true
 		}
 	},
 	RepoDeletedAt: func(ts time.Time) func(*Repo) {
@@ -486,11 +558,6 @@ var Opt = struct {
 			r.UpdatedAt = ts
 			r.DeletedAt = ts
 			r.Sources = map[string]*SourceInfo{}
-		}
-	},
-	RepoEnabled: func(enabled bool) func(*Repo) {
-		return func(r *Repo) {
-			r.Enabled = enabled
 		}
 	},
 	RepoSources: func(srcs ...string) func(*Repo) {

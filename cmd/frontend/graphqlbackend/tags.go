@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	graphql "github.com/graph-gophers/graphql-go"
+	"github.com/graph-gophers/graphql-go"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
+	"github.com/sourcegraph/sourcegraph/internal/db"
 )
 
 func (r *schemaResolver) SetTag(ctx context.Context, args *struct {
@@ -19,7 +19,7 @@ func (r *schemaResolver) SetTag(ctx context.Context, args *struct {
 		return nil, err
 	}
 
-	node, err := NodeByID(ctx, args.Node)
+	node, err := r.nodeByID(ctx, args.Node)
 	if err != nil {
 		return nil, err
 	}

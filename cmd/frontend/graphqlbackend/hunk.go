@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/pkg/vcs/git"
+	"github.com/sourcegraph/sourcegraph/internal/vcs/git"
 )
 
 type hunkResolver struct {
@@ -51,7 +51,7 @@ func (r *hunkResolver) Commit(ctx context.Context) (*GitCommitResolver, error) {
 	if err != nil {
 		return nil, err
 	}
-	commit, err := git.GetCommit(ctx, *cachedRepo, nil, r.hunk.CommitID)
+	commit, err := git.GetCommit(ctx, *cachedRepo, nil, r.hunk.CommitID, git.ResolveRevisionOptions{})
 	if err != nil {
 		return nil, err
 	}

@@ -3,17 +3,17 @@ package graphqlbackend
 import (
 	"context"
 
-	graphql "github.com/graph-gophers/graphql-go"
+	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
+	"github.com/inconshreveable/log15"
 	"github.com/pkg/errors"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/pkg/suspiciousnames"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
-	"github.com/sourcegraph/sourcegraph/pkg/actor"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/errcode"
-	log15 "gopkg.in/inconshreveable/log15.v2"
+	"github.com/sourcegraph/sourcegraph/internal/actor"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/errcode"
 )
 
 func (r *schemaResolver) Organization(ctx context.Context, args struct{ Name string }) (*OrgResolver, error) {
@@ -24,8 +24,8 @@ func (r *schemaResolver) Organization(ctx context.Context, args struct{ Name str
 	return &OrgResolver{org: org}, nil
 }
 
-// Org is DEPRECATED (but still in use by sourcegraph/src). Use Node to look up an org by its
-// graphql.ID instead.
+// Deprecated: Org is only in use by sourcegraph/src. Use Node to look up an
+// org by its graphql.ID instead.
 func (r *schemaResolver) Org(ctx context.Context, args *struct {
 	ID graphql.ID
 }) (*OrgResolver, error) {
@@ -54,9 +54,9 @@ type OrgResolver struct {
 
 func NewOrg(org *types.Org) *OrgResolver { return &OrgResolver{org: org} }
 
-func (o *OrgResolver) ID() graphql.ID { return marshalOrgID(o.org.ID) }
+func (o *OrgResolver) ID() graphql.ID { return MarshalOrgID(o.org.ID) }
 
-func marshalOrgID(id int32) graphql.ID { return relay.MarshalID("Org", id) }
+func MarshalOrgID(id int32) graphql.ID { return relay.MarshalID("Org", id) }
 
 func UnmarshalOrgID(id graphql.ID) (orgID int32, err error) {
 	err = relay.UnmarshalSpec(id, &orgID)
@@ -169,6 +169,8 @@ func (o *OrgResolver) ViewerIsMember(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+func (o *OrgResolver) NamespaceName() string { return o.org.Name }
+
 func (*schemaResolver) CreateOrganization(ctx context.Context, args *struct {
 	Name        string
 	DisplayName *string
@@ -248,13 +250,14 @@ func (*schemaResolver) AddUserToOrganization(ctx context.Context, args *struct {
 	Organization graphql.ID
 	Username     string
 }) (*EmptyResponse, error) {
-	var orgID int32
-	if err := relay.UnmarshalSpec(args.Organization, &orgID); err != nil {
-		return nil, err
-	}
 	// 🚨 SECURITY: Must be a site admin to immediately add a user to an organization (bypassing the
 	// invitation step).
 	if err := backend.CheckCurrentUserIsSiteAdmin(ctx); err != nil {
+		return nil, err
+	}
+
+	var orgID int32
+	if err := relay.UnmarshalSpec(args.Organization, &orgID); err != nil {
 		return nil, err
 	}
 

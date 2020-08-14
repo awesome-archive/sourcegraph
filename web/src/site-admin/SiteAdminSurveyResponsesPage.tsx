@@ -112,7 +112,7 @@ class UserSurveyResponseNode extends React.PureComponent<UserSurveyResponseNodeP
         displayAll: false,
     }
 
-    private showMoreClicked = () => this.setState(state => ({ displayAll: !state.displayAll }))
+    private showMoreClicked = (): void => this.setState(state => ({ displayAll: !state.displayAll }))
 
     public render(): JSX.Element | null {
         const responses = this.props.node.surveyResponses
@@ -125,7 +125,7 @@ class UserSurveyResponseNode extends React.PureComponent<UserSurveyResponseNodeP
                         </strong>
                     </td>
                     <td>
-                        {this.props.node.usageStatistics && this.props.node.usageStatistics.lastActiveTime ? (
+                        {this.props.node.usageStatistics?.lastActiveTime ? (
                             <Timestamp date={this.props.node.usageStatistics.lastActiveTime} />
                         ) : (
                             '?'
@@ -152,8 +152,8 @@ class UserSurveyResponseNode extends React.PureComponent<UserSurveyResponseNodeP
                 {this.state.displayAll && (
                     <tr>
                         <td colSpan={4}>
-                            {responses.map((response, i) => (
-                                <dl key={i}>
+                            {responses.map((response, index) => (
+                                <dl key={index}>
                                     <div className="pl-3 border-left site-admin-survey-responses-connection__wide-border">
                                         <Timestamp date={response.createdAt} />
                                         <ScoreBadge score={response.score} />
@@ -252,7 +252,7 @@ class SiteAdminSurveyResponsesSummary extends React.PureComponent<{}, SiteAdminS
     }
 }
 
-interface Props extends RouteComponentProps<any> {}
+interface Props extends RouteComponentProps<{}> {}
 
 type surveyResultsDisplays = 'chronological' | 'by-user'
 
@@ -279,10 +279,8 @@ export class SiteAdminSurveyResponsesPage extends React.Component<Props, State> 
     public render(): JSX.Element | null {
         return (
             <div className="site-admin-survey-responses-page">
-                <PageTitle title="Survey Responses - Admin" />
-                <div className="d-flex justify-content-between align-items-center mt-3 mb-1">
-                    <h2 className="mb-0">Survey responses</h2>
-                </div>
+                <PageTitle title="User feedback survey - Admin" />
+                <h2>User feedback survey</h2>
                 <p>
                     After using Sourcegraph for a few days, users are presented with a request to answer "How likely is
                     it that you would recommend Sourcegraph to a friend?" on a scale from 0–10 and to provide some

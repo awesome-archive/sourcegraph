@@ -9,6 +9,7 @@ import { RepoHeaderBreadcrumbNavItem } from '../RepoHeaderBreadcrumbNavItem'
 import { RepoHeaderContributionPortal } from '../RepoHeaderContributionPortal'
 import { RepositoryStatsContributorsPage } from './RepositoryStatsContributorsPage'
 import { RepositoryStatsNavbar } from './RepositoryStatsNavbar'
+import { PatternTypeProps } from '../../search'
 
 const NotFoundPage: React.FunctionComponent = () => (
     <HeroPage
@@ -18,8 +19,12 @@ const NotFoundPage: React.FunctionComponent = () => (
     />
 )
 
-interface Props extends RouteComponentProps<{}>, RepoHeaderContributionsLifecycleProps {
+interface Props
+    extends RouteComponentProps<{}>,
+        RepoHeaderContributionsLifecycleProps,
+        Omit<PatternTypeProps, 'setPatternType'> {
     repo: GQL.IRepository
+    globbing: boolean
 }
 
 /**
@@ -64,7 +69,12 @@ export class RepositoryStatsArea extends React.Component<Props> {
                         key="hardcoded-key" // see https://github.com/ReactTraining/react-router/issues/4578#issuecomment-334489490
                         exact={true}
                         render={routeComponentProps => (
-                            <RepositoryStatsContributorsPage {...routeComponentProps} {...transferProps} />
+                            <RepositoryStatsContributorsPage
+                                {...routeComponentProps}
+                                {...transferProps}
+                                patternType={this.props.patternType}
+                                globbing={this.props.globbing}
+                            />
                         )}
                     />
                     <Route key="hardcoded-key" component={NotFoundPage} />

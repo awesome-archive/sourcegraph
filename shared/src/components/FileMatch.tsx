@@ -1,4 +1,4 @@
-import H from 'history'
+import * as H from 'history'
 import React from 'react'
 import { Observable } from 'rxjs'
 import { pluralize } from '../util/strings'
@@ -8,16 +8,19 @@ import { FetchFileCtx } from './CodeExcerpt'
 import { FileMatchChildren } from './FileMatchChildren'
 import { RepoFileLink } from './RepoFileLink'
 import { Props as ResultContainerProps, ResultContainer } from './ResultContainer'
+import { BadgeAttachmentRenderOptions } from 'sourcegraph'
 
 const SUBSET_COUNT_KEY = 'fileMatchSubsetCount'
 
-export type IFileMatch = Partial<Pick<GQL.IFileMatch, 'symbols' | 'limitHit'>> & {
+export type IFileMatch = Partial<Pick<GQL.IFileMatch, 'revSpec' | 'symbols' | 'limitHit'>> & {
     file: Pick<GQL.IFile, 'path' | 'url'> & { commit: Pick<GQL.IGitCommit, 'oid'> }
     repository: Pick<GQL.IRepository, 'name' | 'url'>
     lineMatches: ILineMatch[]
 }
 
-export type ILineMatch = Pick<GQL.ILineMatch, 'preview' | 'lineNumber' | 'offsetAndLengths' | 'limitHit'>
+export type ILineMatch = Pick<GQL.ILineMatch, 'preview' | 'lineNumber' | 'offsetAndLengths' | 'limitHit'> & {
+    badge?: BadgeAttachmentRenderOptions
+}
 
 export interface IMatchItem {
     highlightRanges: {
@@ -26,6 +29,7 @@ export interface IMatchItem {
     }[]
     preview: string
     line: number
+    badge?: BadgeAttachmentRenderOptions
 }
 
 interface Props extends SettingsCascadeProps {
@@ -82,22 +86,31 @@ export class FileMatch extends React.PureComponent<Props> {
 
     public render(): React.ReactNode {
         const result = this.props.result
-        const items: IMatchItem[] = this.props.result.lineMatches.map(m => ({
-            highlightRanges: m.offsetAndLengths.map(offsetAndLength => ({
-                start: offsetAndLength[0],
-                highlightLength: offsetAndLength[1],
-            })),
-            preview: m.preview,
-            line: m.lineNumber,
+        const items: IMatchItem[] = this.props.result.lineMatches.map(match => ({
+            highlightRanges: match.offsetAndLengths.map(([start, highlightLength]) => ({ start, highlightLength })),
+            preview: match.preview,
+            line: match.lineNumber,
+            badge: match.badge,
         }))
+
+        const { repoAtRevURL, revDisplayName } =
+            result.revSpec?.__typename === 'GitRevSpecExpr' && result.revSpec.object?.commit
+                ? { repoAtRevURL: result.revSpec.object?.commit?.url, revDisplayName: result.revSpec.expr }
+                : result.revSpec?.__typename === 'GitRef'
+                ? { repoAtRevURL: result.revSpec.url, revDisplayName: result.revSpec.displayName }
+                : { repoAtRevURL: result.repository.url, revDisplayName: '' }
 
         const title = (
             <RepoFileLink
                 repoName={result.repository.name}
-                repoURL={result.repository.url}
+                repoURL={repoAtRevURL}
                 filePath={result.file.path}
                 fileURL={result.file.url}
-                repoDisplayName={this.props.repoDisplayName}
+                repoDisplayName={
+                    this.props.repoDisplayName
+                        ? `${this.props.repoDisplayName}${revDisplayName ? `@${revDisplayName}` : ''}`
+                        : undefined
+                }
             />
         )
 
@@ -123,7 +136,7 @@ export class FileMatch extends React.PureComponent<Props> {
                 allExpanded: this.props.allExpanded,
             }
         } else {
-            const len = items.length - this.subsetMatches
+            const length = items.length - this.subsetMatches
             containerProps = {
                 collapsible: items.length > this.subsetMatches,
                 defaultExpanded: this.props.expanded,
@@ -139,8 +152,8 @@ export class FileMatch extends React.PureComponent<Props> {
                     />
                 ),
                 expandedChildren,
-                collapseLabel: `Hide ${len} ${pluralize('match', len, 'matches')}`,
-                expandLabel: `Show ${len} more ${pluralize('match', len, 'matches')}`,
+                collapseLabel: `Hide ${length} ${pluralize('match', length, 'matches')}`,
+                expandLabel: `Show ${length} more ${pluralize('match', length, 'matches')}`,
                 allExpanded: this.props.allExpanded,
             }
         }

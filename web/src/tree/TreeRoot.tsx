@@ -20,6 +20,7 @@ import { fetchTreeEntries } from '../repo/backend'
 import { ChildTreeLayer } from './ChildTreeLayer'
 import { TreeNode } from './Tree'
 import { hasSingleChild, singleChildEntriesToGitTree, SingleChildGitTree } from './util'
+import { ErrorAlert } from '../components/alerts'
 
 const maxEntries = 2500
 
@@ -47,7 +48,7 @@ export interface TreeRootProps extends AbsoluteRepo {
     setActiveNode: (node: TreeNode) => void
 }
 
-const LOADING: 'loading' = 'loading'
+const LOADING = 'loading' as const
 interface TreeRootState {
     treeOrError?: typeof LOADING | GQL.IGitTree | ErrorLike
 }
@@ -78,36 +79,33 @@ export class TreeRoot extends React.Component<TreeRootProps, TreeRootState> {
             this.componentUpdates
                 .pipe(
                     distinctUntilChanged(
-                        (x, y) =>
-                            x.repoName === y.repoName &&
-                            x.rev === y.rev &&
-                            x.commitID === y.commitID &&
-                            x.parentPath === y.parentPath &&
-                            x.isExpanded === y.isExpanded &&
-                            x.location === y.location
+                        (a, b) =>
+                            a.repoName === b.repoName &&
+                            a.revision === b.revision &&
+                            a.commitID === b.commitID &&
+                            a.parentPath === b.parentPath &&
+                            a.isExpanded === b.isExpanded &&
+                            a.location === b.location
                     ),
                     filter(props => props.isExpanded),
                     switchMap(props => {
                         const treeFetch = fetchTreeEntries({
                             repoName: props.repoName,
-                            rev: props.rev,
+                            revision: props.revision,
                             commitID: props.commitID,
                             filePath: props.parentPath || '',
                             first: maxEntries,
                         }).pipe(
-                            catchError(err => [asError(err)]),
+                            catchError(error => [asError(error)]),
                             share()
                         )
-                        return merge(
-                            treeFetch,
-                            of(LOADING).pipe(
-                                delay(300),
-                                takeUntil(treeFetch)
-                            )
-                        )
+                        return merge(treeFetch, of(LOADING).pipe(delay(300), takeUntil(treeFetch)))
                     })
                 )
-                .subscribe(treeOrError => this.setState({ treeOrError }), err => console.error(err))
+                .subscribe(
+                    treeOrError => this.setState({ treeOrError }),
+                    error => console.error(error)
+                )
         )
 
         // This handles pre-fetching when a user
@@ -120,11 +118,11 @@ export class TreeRoot extends React.Component<TreeRootProps, TreeRootState> {
                     mergeMap(path =>
                         fetchTreeEntries({
                             repoName: this.props.repoName,
-                            rev: this.props.rev,
+                            revision: this.props.revision,
                             commitID: this.props.commitID,
                             filePath: path,
                             first: maxEntries,
-                        }).pipe(catchError(err => [asError(err)]))
+                        }).pipe(catchError(error => [asError(error)]))
                     )
                 )
                 .subscribe()
@@ -134,7 +132,7 @@ export class TreeRoot extends React.Component<TreeRootProps, TreeRootState> {
         this.componentUpdates.next(this.props)
     }
 
-    public componentDidUpdate(prevProps: TreeRootProps): void {
+    public componentDidUpdate(): void {
         this.componentUpdates.next(this.props)
     }
     public componentWillUnmount(): void {
@@ -157,14 +155,14 @@ export class TreeRoot extends React.Component<TreeRootProps, TreeRootState> {
         return (
             <>
                 {isErrorLike(treeOrError) ? (
-                    <div
+                    <ErrorAlert
                         // needed because of dynamic styling
-                        // eslint-disable-next-line react/forbid-dom-props
                         style={errorWidth(localStorage.getItem(this.props.sizeKey) ? this.props.sizeKey : undefined)}
-                        className="tree__row tree__row-alert alert alert-danger"
-                    >
-                        Error loading tree: {treeOrError.message}
-                    </div>
+                        className="tree__row tree__row-alert"
+                        prefix="Error loading tree"
+                        error={treeOrError}
+                        history={this.props.history}
+                    />
                 ) : (
                     <table className="tree-layer" tabIndex={0}>
                         <tbody>
@@ -205,7 +203,7 @@ export class TreeRoot extends React.Component<TreeRootProps, TreeRootState> {
     private fetchChildContents = (path: string): void => {
         this.rowHovers.next(path)
     }
-    private setChildNode = (node: TreeNode, index: number) => {
+    private setChildNode = (node: TreeNode, index: number): void => {
         this.node.childNodes[index] = node
     }
 }

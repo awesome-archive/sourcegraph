@@ -8,14 +8,14 @@ import { Key } from 'ts-key-enum'
 import { ErrorLike, isErrorLike } from '../../util/errors'
 import { CompletionWidgetDropdown } from './CompletionWidgetDropdown'
 
-export const LOADING: 'loading' = 'loading'
+export const LOADING = 'loading' as const
 export type CompletionResult = typeof LOADING | ErrorLike | CompletionList | null
 
 function isSuccessfulFetch(result: CompletionResult): result is CompletionList {
     return result !== LOADING && !isErrorLike(result)
 }
 
-// In order to handle keyboard events correctly, we need to explictly manage/control some of the
+// In order to handle keyboard events correctly, we need to explicitly manage/control some of the
 // state of Downshift since we have no control over the underlying TextArea element.
 //
 // (See https://github.com/paypal/downshift#control-props for more information.)
@@ -70,8 +70,8 @@ export class CompletionWidget extends React.Component<CompletionWidgetProps, Sta
 
     public componentDidMount(): void {
         this.subscriptions.add(
-            fromEvent<KeyboardEvent>(this.props.textArea, 'keydown').subscribe(e =>
-                this.handleKeyboardNavigationEvents(e)
+            fromEvent<KeyboardEvent>(this.props.textArea, 'keydown').subscribe(event =>
+                this.handleKeyboardNavigationEvents(event)
             )
         )
 
@@ -99,10 +99,10 @@ export class CompletionWidget extends React.Component<CompletionWidgetProps, Sta
         this.itemSelections.next(item)
     }
 
-    private handleKeyboardNavigationEvents(e: KeyboardEvent): void {
+    private handleKeyboardNavigationEvents(event: KeyboardEvent): void {
         let handled = false
 
-        switch (e.key) {
+        switch (event.key) {
             case Key.ArrowDown:
                 handled = this.scrollDown()
                 break
@@ -119,7 +119,7 @@ export class CompletionWidget extends React.Component<CompletionWidgetProps, Sta
         }
 
         if (handled) {
-            e.preventDefault()
+            event.preventDefault()
         }
     }
 

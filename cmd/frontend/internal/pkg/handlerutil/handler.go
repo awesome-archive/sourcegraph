@@ -7,28 +7,15 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"sync"
 
-	"gopkg.in/inconshreveable/log15.v2"
+	"github.com/inconshreveable/log15"
 
-	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
 
 	"github.com/neelance/parallel"
 
-	"github.com/sourcegraph/sourcegraph/pkg/errcode"
+	"github.com/sourcegraph/sourcegraph/internal/errcode"
 )
-
-var (
-	schemaDecoder = schema.NewDecoder()
-	once          sync.Once
-)
-
-func init() {
-	once.Do(func() {
-		schemaDecoder.IgnoreUnknownKeys(true)
-	})
-}
 
 // HandlerWithErrorReturn wraps a http.HandlerFunc-like func that also
 // returns an error.  If the error is nil, this wrapper is a no-op. If
@@ -54,8 +41,8 @@ func (h HandlerWithErrorReturn) ServeHTTP(w http.ResponseWriter, r *http.Request
 			stack := make([]byte, 1024*1024)
 			n := runtime.Stack(stack, false)
 			stack = stack[:n]
-			io.WriteString(os.Stderr, "\nstack trace:\n")
-			os.Stderr.Write(stack)
+			_, _ = io.WriteString(os.Stderr, "\nstack trace:\n")
+			_, _ = os.Stderr.Write(stack)
 
 			err := fmt.Errorf("panic: %v\n\nstack trace:\n%s", e, stack)
 			status := http.StatusInternalServerError

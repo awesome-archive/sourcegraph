@@ -6,15 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sourcegraph/sourcegraph/pkg/api"
+	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func TestServer_handleGet(t *testing.T) {
 	conn := []*schema.GitoliteConnection{{
-		Blacklist: "isblaclist.*",
-		Prefix:    "mygitolite.host/",
-		Host:      "git@mygitolite.host",
+		Prefix: "mygitolite.host/",
+		Host:   "git@mygitolite.host",
 		Phabricator: &schema.Phabricator{
 			CallsignCommand: `echo ${REPO} | tr a-z A-Z`,
 			Url:             "https://phab.mycompany.com",
@@ -57,9 +56,8 @@ func TestServer_handleGet(t *testing.T) {
 
 func TestServer_handleGet_invalid(t *testing.T) {
 	conn := []*schema.GitoliteConnection{{
-		Blacklist: "isblaclist.*",
-		Prefix:    "mygitolite.host/",
-		Host:      "git@mygitolite.host",
+		Prefix: "mygitolite.host/",
+		Host:   "git@mygitolite.host",
 		Phabricator: &schema.Phabricator{
 			CallsignCommand: `echo "Something went wrong this is not a valid callsign"`,
 		},

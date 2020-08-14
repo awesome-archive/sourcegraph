@@ -96,7 +96,7 @@ kubectl apply -f ./phabricator
 
 ##### Docker (local)
 
-You can run locally via docker. We have 
+You can run locally via docker. We have
 [<https://sourcegraph.com/github.com/sourcegraph/sourcegraph/-/tree/dev/phabricator>](https://sourcegraph.com/github.com/sourcegraph/sourcegraph/-/tree/dev/phabricator)
 for this using
 [Bitnami.](https://docs.bitnami.com/installer/apps/phabricator/)
@@ -111,9 +111,9 @@ dev/phabricator/stop.sh
 
 #### Add repositories
 
-1. Click the link to [Diffusion](http://127.0.0.1/diffusion/)
+1. Click the link to [Diffusion](http://localhost/diffusion/)
 
-2. [Create a repository](http://127.0.0.1/diffusion/edit) and
+2. [Create a repository](http://localhost/diffusion/edit) and
     select git as the vcs
 
     Give the repository a name and a callsign with only
@@ -137,6 +137,8 @@ dev/phabricator/stop.sh
 
 #### Install the Sourcegraph Phabricator extension.
 
+You can use `dev/phabricator/install-sourcegraph.sh`. To install it manually:
+
 SSH into your Phabricator instance and follow [the installation steps in the README.](https://github.com/sourcegraph/phabricator-extension/blob/master/README.md#installation)
 If you used the helper scripts, the root Phabricator directory
 will be `/opt/bitnami/phabricator`.
@@ -149,23 +151,23 @@ will be `/opt/bitnami/phabricator`.
 
 3. Ensure `.arcconfig` has been added
 
-```json
-  {
-    "phabricator.uri" : "https://<your phabricator host>/"
-  }
-```
+    ```
+      {
+        "phabricator.uri" : "https://<your phabricator host>/"
+      }
+    ```
 
 4. Make some changes and push the diff to Phabricator's
 
     Use `arc` to create a new branch
 
-    ```shell
+    ```
     arc branch my-branch
     ```
 
     Make some changes, commit them, and upload the diff to Phabricator. DO NOT PUSH them to the git remote. If you push the changes to the git remote, we no longer are testing a critical feature of the Sourcegraph Phabricator integration, which is that it uses staging areas if configured or attempts to apply patchsets.
 
-    ```shell
+    ```
     git add . git commit -m "some changes" arc diff
     ```
 
@@ -181,7 +183,7 @@ will be `/opt/bitnami/phabricator`.
 #### Browser Extension
 
 1. Verify [`sourcegraph.enabled`](https://phabricator.sgdev.org/config/edit/sourcegraph.enabled/) is set to `true`
-2. Point your browser extension to a Sourcegraph instance with the following external service:
+2. Point your browser extension to a Sourcegraph instance with the following code host:
     ```
     {
       "prefix": "gitolite.sgdev.org/",
@@ -200,7 +202,7 @@ will be `/opt/bitnami/phabricator`.
 
 1. Run a local Sourcegraph dev instance tunnelled through ngrok
 2. Set `corsOrigin` to `"https://phabricator.sgdev.org"` in your site config
-3. Add the following Gitolite external service:
+3. Add the following Gitolite code host:
     ```
     {
       "prefix": "gitolite.sgdev.org/",

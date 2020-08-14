@@ -7,23 +7,24 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
-	graphql "github.com/graph-gophers/graphql-go"
+	"github.com/graph-gophers/graphql-go"
 	"github.com/pkg/errors"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/db"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
-	"github.com/sourcegraph/sourcegraph/pkg/api"
-	"github.com/sourcegraph/sourcegraph/pkg/conf"
-	"github.com/sourcegraph/sourcegraph/pkg/env"
-	"github.com/sourcegraph/sourcegraph/pkg/repoupdater"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/db"
+	"github.com/sourcegraph/sourcegraph/internal/env"
+	"github.com/sourcegraph/sourcegraph/internal/repoupdater"
 )
 
 var extsvcConfigAllowEdits, _ = strconv.ParseBool(env.Get("EXTSVC_CONFIG_ALLOW_EDITS", "false", "When EXTSVC_CONFIG_FILE is in use, allow edits in the application to be made which will be overwritten on next process restart"))
 
 func (r *schemaResolver) AddExternalService(ctx context.Context, args *struct {
-	Input *struct {
+	Input struct {
 		Kind        string
 		DisplayName string
 		Config      string
@@ -55,22 +56,25 @@ func (r *schemaResolver) AddExternalService(ctx context.Context, args *struct {
 	return res, nil
 }
 
+type UpdateExternalServiceInput struct {
+	ID          graphql.ID
+	DisplayName *string
+	Config      *string
+}
+
 func (*schemaResolver) UpdateExternalService(ctx context.Context, args *struct {
-	Input *struct {
-		ID          graphql.ID
-		DisplayName *string
-		Config      *string
-	}
+	Input UpdateExternalServiceInput
 }) (*externalServiceResolver, error) {
+	// 🚨 SECURITY: Only site admins are allowed to update the user.
+	if err := backend.CheckCurrentUserIsSiteAdmin(ctx); err != nil {
+		return nil, err
+	}
+
 	externalServiceID, err := unmarshalExternalServiceID(args.Input.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	// 🚨 SECURITY: Only site admins are allowed to update the user.
-	if err := backend.CheckCurrentUserIsSiteAdmin(ctx); err != nil {
-		return nil, err
-	}
 	if os.Getenv("EXTSVC_CONFIG_FILE") != "" && !extsvcConfigAllowEdits {
 		return nil, errors.New("updating external service not allowed when using EXTSVC_CONFIG_FILE")
 	}
@@ -79,7 +83,7 @@ func (*schemaResolver) UpdateExternalService(ctx context.Context, args *struct {
 		return nil, fmt.Errorf("blank external service configuration is invalid (must be valid JSONC)")
 	}
 
-	ps := conf.Get().Critical.AuthProviders
+	ps := conf.Get().AuthProviders
 	update := &db.ExternalServiceUpdate{
 		DisplayName: args.Input.DisplayName,
 		Config:      args.Input.Config,
@@ -103,6 +107,11 @@ func (*schemaResolver) UpdateExternalService(ctx context.Context, args *struct {
 
 // Eagerly trigger a repo-updater sync.
 func syncExternalService(ctx context.Context, svc *types.ExternalService) error {
+	// Only give 5s to validate external service sync. Usually if there is a
+	// problem it fails sooner.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	_, err := repoupdater.DefaultClient.SyncExternalService(ctx, api.ExternalService{
 		ID:          svc.ID,
 		Kind:        svc.Kind,
@@ -112,7 +121,7 @@ func syncExternalService(ctx context.Context, svc *types.ExternalService) error 
 		UpdatedAt:   svc.UpdatedAt,
 		DeletedAt:   svc.DeletedAt,
 	})
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		return err
 	}
 
@@ -143,10 +152,14 @@ func (*schemaResolver) DeleteExternalService(ctx context.Context, args *struct {
 	if err := db.ExternalServices.Delete(ctx, id); err != nil {
 		return nil, err
 	}
+	now := time.Now()
+	externalService.DeletedAt = &now
 
-	if err = syncExternalService(ctx, externalService); err != nil {
-		return nil, errors.Wrap(err, "warning: external service deleted, but sync request failed")
-	}
+	// The user doesn't care if triggering syncing failed when deleting a
+	// service, so kick off in the background.
+	go func() {
+		_ = syncExternalService(context.Background(), externalService)
+	}()
 
 	return &EmptyResponse{}, nil
 }

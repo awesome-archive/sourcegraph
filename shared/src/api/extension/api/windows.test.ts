@@ -1,44 +1,52 @@
 import { Selection } from '@sourcegraph/extension-api-classes'
-import { ExtDocuments } from './documents'
-import { ExtWindow, ExtWindows } from './windows'
+import { ExtensionDocuments } from './documents'
+import { ExtensionWindow, ExtensionWindows } from './windows'
 
-describe('ExtWindow', () => {
+describe('ExtensionWindow', () => {
     const NOOP_PROXY = {} as any
 
-    const DOCUMENTS = new ExtDocuments(() => Promise.resolve())
-    DOCUMENTS.$acceptDocumentData([{ uri: 'u', text: 't', languageId: 'l' }])
+    const DOCUMENTS = new ExtensionDocuments(() => Promise.resolve())
+    DOCUMENTS.$acceptDocumentData([{ type: 'added', uri: 'u', text: 't', languageId: 'l' }])
 
     test('reuses ExtCodeEditor object when updated', () => {
-        const wins = new ExtWindow(NOOP_PROXY, DOCUMENTS, {
-            editors: [{ type: 'CodeEditor', editorId: 'editor#0', resource: 'u', isActive: true, selections: [] }],
-        })
+        const wins = new ExtensionWindow(NOOP_PROXY, DOCUMENTS, [
+            {
+                type: 'added',
+                viewerId: 'viewer#0',
+                viewerData: { type: 'CodeEditor', resource: 'u', isActive: true, selections: [] },
+            },
+        ])
         const origViewComponent = wins.activeViewComponent
         expect(origViewComponent).toBeTruthy()
 
-        wins.update({
-            editors: [
-                {
-                    type: 'CodeEditor',
-                    editorId: 'editor#0',
-                    resource: 'u',
-                    isActive: true,
-                    selections: [new Selection(1, 2, 3, 4)],
-                },
-            ],
-        })
+        wins.update([
+            {
+                type: 'updated',
+                viewerId: 'viewer#0',
+                viewerData: { selections: [new Selection(1, 2, 3, 4)] },
+            },
+        ])
         expect(wins.activeViewComponent).toBe(origViewComponent)
     })
 
-    test('creates new ExtCodeEditor object for a different resource URI', () => {
-        const wins = new ExtWindow(NOOP_PROXY, DOCUMENTS, {
-            editors: [{ type: 'CodeEditor', editorId: 'editor#0', resource: 'u', isActive: true, selections: [] }],
-        })
+    test('creates new ExtCodeEditor object for a different viewerId', () => {
+        const wins = new ExtensionWindow(NOOP_PROXY, DOCUMENTS, [
+            {
+                type: 'added',
+                viewerId: 'viewer#0',
+                viewerData: { type: 'CodeEditor', resource: 'u', isActive: true, selections: [] },
+            },
+        ])
         const origViewComponent = wins.activeViewComponent
         expect(origViewComponent).toBeTruthy()
 
-        wins.update({
-            editors: [{ type: 'CodeEditor', editorId: 'editor#1', resource: 'u2', isActive: true, selections: [] }],
-        })
+        wins.update([
+            {
+                type: 'added',
+                viewerId: 'viewer#1',
+                viewerData: { type: 'CodeEditor', resource: 'u', isActive: true, selections: [] },
+            },
+        ])
         expect(wins.activeViewComponent).not.toBe(origViewComponent)
     })
 })
@@ -46,25 +54,37 @@ describe('ExtWindow', () => {
 describe('ExtWindows', () => {
     const NOOP_PROXY = {} as any
 
-    const documents = new ExtDocuments(() => Promise.resolve())
-    documents.$acceptDocumentData([{ uri: 'u', text: 't', languageId: 'l' }])
+    const documents = new ExtensionDocuments(() => Promise.resolve())
+    documents.$acceptDocumentData([{ type: 'added', uri: 'u', text: 't', languageId: 'l' }])
 
     test('reuses ExtWindow object when updated', () => {
-        const wins = new ExtWindows(NOOP_PROXY, documents)
-        wins.$acceptWindowData({
-            editors: [{ type: 'CodeEditor', editorId: 'editor#0', resource: 'u', isActive: true, selections: [] }],
-        })
+        const wins = new ExtensionWindows(NOOP_PROXY, documents)
+        wins.$acceptWindowData([
+            {
+                type: 'added',
+                viewerId: 'viewer#0',
+                viewerData: { type: 'CodeEditor', resource: 'u', isActive: true, selections: [] },
+            },
+        ])
         const origWin = wins.activeWindow
         expect(origWin).toBeTruthy()
 
-        wins.$acceptWindowData({
-            editors: [{ type: 'CodeEditor', editorId: 'editor#0', resource: 'u', isActive: false, selections: [] }],
-        })
+        wins.$acceptWindowData([
+            {
+                type: 'updated',
+                viewerId: 'viewer#0',
+                viewerData: { selections: [] },
+            },
+        ])
         expect(wins.activeWindow).toBe(origWin)
 
-        wins.$acceptWindowData({
-            editors: [{ type: 'CodeEditor', editorId: 'editor#1', resource: 'u2', isActive: false, selections: [] }],
-        })
+        wins.$acceptWindowData([
+            {
+                type: 'added',
+                viewerId: 'viewer#1',
+                viewerData: { type: 'CodeEditor', resource: 'u', isActive: true, selections: [] },
+            },
+        ])
         expect(wins.activeWindow).toBe(origWin)
     })
 })

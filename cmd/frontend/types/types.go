@@ -2,9 +2,11 @@
 package types
 
 import (
+	"database/sql"
 	"time"
 
-	"github.com/sourcegraph/sourcegraph/pkg/api"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 )
 
 // RepoFields are lazy loaded data fields on a Repo (from the DB).
@@ -24,6 +26,12 @@ type RepoFields struct {
 
 	// Fork is whether this repository is a fork of another repository.
 	Fork bool
+
+	// Archived is whether this repository has been archived.
+	Archived bool
+
+	// Cloned is whether this repository is cloned.
+	Cloned bool
 }
 
 // Repo represents a source code repository.
@@ -39,6 +47,9 @@ type Repo struct {
 	//
 	// Previously, this was called RepoURI.
 	Name api.RepoName
+
+	// Private is whether the repository is private on the code host.
+	Private bool
 
 	// RepoFields contains fields that are loaded from the DB only when necessary.
 	// This is to reduce memory usage when loading thousands of repos.
@@ -63,6 +74,11 @@ type ExternalService struct {
 	DeletedAt   *time.Time
 }
 
+// URN returns a unique resource identifier of this external service.
+func (e *ExternalService) URN() string {
+	return extsvc.URN(e.Kind, e.ID)
+}
+
 type GlobalState struct {
 	SiteID      string
 	Initialized bool // whether the initial site admin account has been created
@@ -77,6 +93,7 @@ type User struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	SiteAdmin   bool
+	BuiltinAuth bool
 	Tags        []string
 }
 
@@ -113,12 +130,33 @@ type UserUsageStatistics struct {
 	LastCodeHostIntegrationTime *time.Time
 }
 
+// UserUsageCounts captures the usage numbers of a user in a single day.
+type UserUsageCounts struct {
+	Date           time.Time
+	UserID         uint32
+	SearchCount    int32
+	CodeIntelCount int32
+}
+
+// UserDates captures the created and deleted dates of a single user.
+type UserDates struct {
+	UserID    int32
+	CreatedAt time.Time
+	DeletedAt time.Time
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
 type SiteUsageStatistics struct {
 	DAUs []*SiteActivityPeriod
 	WAUs []*SiteActivityPeriod
 	MAUs []*SiteActivityPeriod
 }
 
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
 type SiteActivityPeriod struct {
 	StartTime            time.Time
 	UserCount            int32
@@ -128,6 +166,9 @@ type SiteActivityPeriod struct {
 	Stages               *Stages
 }
 
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
 type Stages struct {
 	Manage    int32 `json:"mng"`
 	Plan      int32 `json:"plan"`
@@ -142,6 +183,178 @@ type Stages struct {
 	Automate  int32 `json:"auto"`
 }
 
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type CampaignsUsageStatistics struct {
+	CampaignsCount              int32
+	ActionChangesetsCount       int32
+	ActionChangesetsMergedCount int32
+	ManualChangesetsCount       int32
+	ManualChangesetsMergedCount int32
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type CodeIntelUsageStatistics struct {
+	Daily   []*CodeIntelUsagePeriod
+	Weekly  []*CodeIntelUsagePeriod
+	Monthly []*CodeIntelUsagePeriod
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type CodeIntelUsagePeriod struct {
+	StartTime   time.Time
+	Hover       *CodeIntelEventCategoryStatistics
+	Definitions *CodeIntelEventCategoryStatistics
+	References  *CodeIntelEventCategoryStatistics
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type CodeIntelEventCategoryStatistics struct {
+	LSIF   *CodeIntelEventStatistics
+	LSP    *CodeIntelEventStatistics
+	Search *CodeIntelEventStatistics
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type CodeIntelEventStatistics struct {
+	UsersCount     int32
+	EventsCount    *int32
+	EventLatencies *CodeIntelEventLatencies
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type CodeIntelEventLatencies struct {
+	P50 float64
+	P90 float64
+	P99 float64
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type SearchUsageStatistics struct {
+	Daily   []*SearchUsagePeriod
+	Weekly  []*SearchUsagePeriod
+	Monthly []*SearchUsagePeriod
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type SearchUsagePeriod struct {
+	StartTime          time.Time
+	TotalUsers         int32
+	Literal            *SearchEventStatistics
+	Regexp             *SearchEventStatistics
+	After              *SearchCountStatistics
+	Archived           *SearchCountStatistics
+	Author             *SearchCountStatistics
+	Before             *SearchCountStatistics
+	Case               *SearchCountStatistics
+	Commit             *SearchEventStatistics
+	Committer          *SearchCountStatistics
+	Content            *SearchCountStatistics
+	Count              *SearchCountStatistics
+	Diff               *SearchEventStatistics
+	File               *SearchEventStatistics
+	Fork               *SearchCountStatistics
+	Index              *SearchCountStatistics
+	Lang               *SearchCountStatistics
+	Message            *SearchCountStatistics
+	PatternType        *SearchCountStatistics
+	Repo               *SearchEventStatistics
+	Repohascommitafter *SearchCountStatistics
+	Repohasfile        *SearchCountStatistics
+	Repogroup          *SearchCountStatistics
+	Structural         *SearchEventStatistics
+	Symbol             *SearchEventStatistics
+	Timeout            *SearchCountStatistics
+	Type               *SearchCountStatistics
+	SearchModes        *SearchModeUsageStatistics
+}
+
+type SearchModeUsageStatistics struct {
+	Interactive *SearchCountStatistics
+	PlainText   *SearchCountStatistics
+}
+
+type SearchCountStatistics struct {
+	UserCount   *int32
+	EventsCount *int32
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type SearchEventStatistics struct {
+	UserCount      *int32
+	EventsCount    *int32
+	EventLatencies *SearchEventLatencies
+}
+
+// NOTE: DO NOT alter this struct without making a symmetric change
+// to the updatecheck handler. This struct is marshalled and sent to
+// BigQuery, which requires the input match its schema exactly.
+type SearchEventLatencies struct {
+	P50 float64
+	P90 float64
+	P99 float64
+}
+
+// SiteUsageSummary is an alternate view of SiteUsageStatistics which is
+// calculated in the database layer.
+type SiteUsageSummary struct {
+	Month                   time.Time
+	Week                    time.Time
+	Day                     time.Time
+	UniquesMonth            int32
+	UniquesWeek             int32
+	UniquesDay              int32
+	RegisteredUniquesMonth  int32
+	RegisteredUniquesWeek   int32
+	RegisteredUniquesDay    int32
+	IntegrationUniquesMonth int32
+	IntegrationUniquesWeek  int32
+	IntegrationUniquesDay   int32
+	ManageUniquesMonth      int32
+	CodeUniquesMonth        int32
+	VerifyUniquesMonth      int32
+	MonitorUniquesMonth     int32
+	ManageUniquesWeek       int32
+	CodeUniquesWeek         int32
+	VerifyUniquesWeek       int32
+	MonitorUniquesWeek      int32
+}
+
+// AggregatedEvent represents the total events, unique users, and
+// latencies over the current month, week, and day for a single event.
+type AggregatedEvent struct {
+	Name           string
+	Month          time.Time
+	Week           time.Time
+	Day            time.Time
+	TotalMonth     int32
+	TotalWeek      int32
+	TotalDay       int32
+	UniquesMonth   int32
+	UniquesWeek    int32
+	UniquesDay     int32
+	LatenciesMonth []float64
+	LatenciesWeek  []float64
+	LatenciesDay   []float64
+}
+
 type SurveyResponse struct {
 	ID        int32
 	UserID    *int32
@@ -152,7 +365,31 @@ type SurveyResponse struct {
 	CreatedAt time.Time
 }
 
-type StatusMessage struct {
-	Message string
-	Type    string
+type Event struct {
+	ID              int32
+	Name            string
+	URL             string
+	UserID          *int32
+	AnonymousUserID string
+	Argument        string
+	Source          string
+	Version         string
+	Timestamp       time.Time
+}
+
+// Secret represents the secrets table
+type Secret struct {
+	ID int32
+
+	// The table containing an object whose token is being encrypted.
+	SourceType sql.NullString
+
+	// The ID of the object in the SourceType table.
+	SourceID sql.NullInt32
+
+	// KeyName represents a unique key for the case where we're storing key-value pairs.
+	KeyName sql.NullString
+
+	// Value contains the encrypted string
+	Value string
 }

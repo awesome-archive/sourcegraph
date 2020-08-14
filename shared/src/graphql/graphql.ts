@@ -1,8 +1,8 @@
 import { Observable } from 'rxjs'
-import { ajax, AjaxRequest, AjaxResponse } from 'rxjs/ajax'
-import { catchError, map } from 'rxjs/operators'
+import { fromFetch } from 'rxjs/fetch'
 import { Omit } from 'utility-types'
-import { createAggregateError, normalizeAjaxError } from '../util/errors'
+import { createAggregateError } from '../util/errors'
+import { checkOk } from '../backend/fetch'
 import * as GQL from './schema'
 
 /**
@@ -11,7 +11,7 @@ import * as GQL from './schema'
 export const gql = (template: TemplateStringsArray, ...substitutions: any[]): string =>
     String.raw(template, ...substitutions)
 
-export interface SuccessGraphQLResult<T extends GQL.IQuery | GQL.IMutation> {
+export interface SuccessGraphQLResult<T> {
     data: T
     errors: undefined
 }
@@ -20,19 +20,17 @@ export interface ErrorGraphQLResult {
     errors: GQL.IGraphQLResponseError[]
 }
 
-export type GraphQLResult<T extends GQL.IQuery | GQL.IMutation> = SuccessGraphQLResult<T> | ErrorGraphQLResult
+export type GraphQLResult<T> = SuccessGraphQLResult<T> | ErrorGraphQLResult
 
 /**
  * Guarantees that the GraphQL query resulted in an error.
  */
-export function isGraphQLError<T extends GQL.IQuery | GQL.IMutation>(
-    result: GraphQLResult<T>
-): result is ErrorGraphQLResult {
+export function isErrorGraphQLResult<T>(result: GraphQLResult<T>): result is ErrorGraphQLResult {
     return !!(result as ErrorGraphQLResult).errors && (result as ErrorGraphQLResult).errors.length > 0
 }
 
-export function dataOrThrowErrors<T extends GQL.IQuery | GQL.IMutation>(result: GraphQLResult<T>): T {
-    if (isGraphQLError(result)) {
+export function dataOrThrowErrors<T>(result: GraphQLResult<T>): T {
+    if (isErrorGraphQLResult(result)) {
         throw createAggregateError(result.errors)
     }
     return result.data
@@ -50,34 +48,25 @@ export const createInvalidGraphQLMutationResponseError = (queryName: string): Gr
         queryName,
     })
 
-export interface GraphQLRequestOptions {
-    headers: AjaxRequest['headers']
-    requestOptions?: Partial<Omit<AjaxRequest, 'url' | 'method' | 'headers' | 'body'>>
+export interface GraphQLRequestOptions extends Omit<RequestInit, 'method' | 'body'> {
     baseUrl?: string
 }
 
-export function requestGraphQL<T extends GQL.IQuery | GQL.IMutation>({
+export function requestGraphQL<T, V = object>({
     request,
-    variables = {},
-    headers,
-    requestOptions = {},
-    baseUrl = '',
+    baseUrl,
+    variables,
+    ...options
 }: GraphQLRequestOptions & {
     request: string
-    variables?: {}
+    variables?: V
 }): Observable<GraphQLResult<T>> {
     const nameMatch = request.match(/^\s*(?:query|mutation)\s+(\w+)/)
-    return ajax({
+    const apiURL = `/.api/graphql${nameMatch ? '?' + nameMatch[1] : ''}`
+    return fromFetch(baseUrl ? new URL(apiURL, baseUrl).href : apiURL, {
+        ...options,
         method: 'POST',
-        url: `${baseUrl}/.api/graphql${nameMatch ? '?' + nameMatch[1] : ''}`,
-        headers,
         body: JSON.stringify({ query: request, variables }),
-        ...requestOptions,
-    }).pipe(
-        catchError<AjaxResponse, never>(err => {
-            normalizeAjaxError(err)
-            throw err
-        }),
-        map(({ response }) => response)
-    )
+        selector: response => checkOk(response).json(),
+    })
 }

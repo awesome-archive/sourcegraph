@@ -15,10 +15,13 @@ describe('match', () => {
     })
 
     test('supports iterators for the document selectors', () => {
-        let i = 0
+        let index = 0
         const iterator = {
             [Symbol.iterator](): IterableIterator<DocumentSelector> {
-                return { [Symbol.iterator]: iterator[Symbol.iterator], next: () => ({ value: ['*'], done: i++ === 1 }) }
+                return {
+                    [Symbol.iterator]: iterator[Symbol.iterator],
+                    next: () => ({ value: ['*'], done: index++ === 1 }),
+                }
             },
         }
         expect(match(iterator as IterableIterator<DocumentSelector>, FIXTURE_TEXT_DOCUMENT)).toBeTruthy()
@@ -27,29 +30,39 @@ describe('match', () => {
 
 describe('score', () => {
     test('matches', () => {
-        expect(score(['l'], 'file:///f', 'l')).toBe(10)
-        expect(score(['*'], 'file:///f', 'l')).toBe(5)
-        expect(score(['x'], 'file:///f', 'l')).toBe(0)
-        expect(score([{ scheme: 'file' }], 'file:///f', 'l')).toBe(10)
-        expect(score([{ scheme: '*' }], 'file:///f', 'l')).toBe(5)
-        expect(score([{ scheme: 'x' }], 'file:///f', 'l')).toBe(0)
-        expect(score([{ pattern: 'file:///*.txt' }], 'file:///f.txt', 'l')).toBe(10)
-        expect(score([{ pattern: '**/*.txt' }], 'file:///f.txt', 'l')).toBe(10)
-        expect(score([{ pattern: '*.txt' }], 'file:///f.txt', 'l')).toBe(5)
+        expect(score(['l'], new URL('file:///f'), 'l')).toBe(10)
+        expect(score(['*'], new URL('file:///f'), 'l')).toBe(5)
+        expect(score(['x'], new URL('file:///f'), 'l')).toBe(0)
+        expect(score([{ scheme: 'file' }], new URL('file:///f'), 'l')).toBe(10)
+        expect(score([{ scheme: '*' }], new URL('file:///f'), 'l')).toBe(5)
+        expect(score([{ scheme: 'x' }], new URL('file:///f'), 'l')).toBe(0)
+        expect(score([{ pattern: '**/*.txt' }], new URL('file:///f.txt'), 'l')).toBe(10)
+        expect(score([{ pattern: '*.txt' }], new URL('file:///f.txt'), 'l')).toBe(10)
+        expect(
+            score([{ baseUri: 'git://repo?revision', pattern: '*.txt' }], new URL('git://repo?revision#f.txt'), 'l')
+        ).toBe(10)
+        expect(score([{ baseUri: 'file:///a/b', pattern: '*.txt' }], new URL('file:///a/b/c.txt'), 'l')).toBe(5)
+        expect(
+            score([{ baseUri: 'git://repo?revision', pattern: '**/*.txt' }], new URL('git://repo?revision#f.txt'), 'l')
+        ).toBe(10)
+        expect(score([{ baseUri: 'git://repo', pattern: '**/*.txt' }], new URL('git://repo?revision#f.txt'), 'l')).toBe(
+            10
+        )
+        expect(score([{ baseUri: 'git://repo?revision' }], new URL('git://repo?revision#f.txt'), 'l')).toBe(5)
         expect(
             score(
                 [{ pattern: '*.go' }],
-                'git://127.0.0.1-3434/repos/.git?51c44e6be08627c613f787032a2759162bf6f7c2#web/api.go',
+                new URL('git://127.0.0.1-3434/repos/.git?51c44e6be08627c613f787032a2759162bf6f7c2#web/api.go'),
                 'l'
             )
         ).toBe(5)
-        expect(score([{ pattern: 'f.txt' }], 'file:///f.txt', 'l')).toBe(10)
-        expect(score([{ pattern: 'x' }], 'file:///f.txt', 'l')).toBe(0)
-        expect(score([{ pattern: 'f.txt', language: 'x' }], 'file:///f.txt', 'l')).toBe(0)
-        expect(score([{ language: 'x' }], 'file:///f.txt', 'l')).toBe(0)
-        expect(score([{ language: 'l' }], 'file:///f.txt', 'l')).toBe(10)
-        expect(score([{ language: '*' }], 'file:///f.txt', 'l')).toBe(5)
-        expect(score([{}], 'file:///f.txt', 'l')).toBe(5)
+        expect(score([{ pattern: 'f.txt' }], new URL('file:///f.txt'), 'l')).toBe(10)
+        expect(score([{ pattern: 'x' }], new URL('file:///f.txt'), 'l')).toBe(0)
+        expect(score([{ pattern: 'f.txt', language: 'x' }], new URL('file:///f.txt'), 'l')).toBe(0)
+        expect(score([{ language: 'x' }], new URL('file:///f.txt'), 'l')).toBe(0)
+        expect(score([{ language: 'l' }], new URL('file:///f.txt'), 'l')).toBe(10)
+        expect(score([{ language: '*' }], new URL('file:///f.txt'), 'l')).toBe(5)
+        expect(score([{}], new URL('file:///f.txt'), 'l')).toBe(5)
     })
 })
 
@@ -90,16 +103,16 @@ export const POSITION_TO_OFFSET_TESTS: OffsetPositionTestCase[] = [
 ]
 
 describe('offsetToPosition', () => {
-    for (const [i, { text, ...c }] of OFFSET_TO_POSITION_TESTS.entries()) {
-        if (!('offset' in c)) {
+    for (const [index, { text, ...testCase }] of OFFSET_TO_POSITION_TESTS.entries()) {
+        if (!('offset' in testCase)) {
             continue
         }
-        test(i.toString(), () => expect(offsetToPosition(text, c.offset)).toEqual(c.pos))
+        test(index.toString(), () => expect(offsetToPosition(text, testCase.offset)).toEqual(testCase.pos))
     }
 })
 
 describe('positionToOffset', () => {
-    for (const [i, { text, ...c }] of POSITION_TO_OFFSET_TESTS.entries()) {
-        test(i.toString(), () => expect(positionToOffset(text, c.pos)).toEqual(c.offset))
+    for (const [index, { text, ...testCase }] of POSITION_TO_OFFSET_TESTS.entries()) {
+        test(index.toString(), () => expect(positionToOffset(text, testCase.pos)).toEqual(testCase.offset))
     }
 })

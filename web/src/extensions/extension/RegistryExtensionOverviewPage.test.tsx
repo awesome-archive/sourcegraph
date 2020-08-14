@@ -1,19 +1,23 @@
 import { noop } from 'lodash'
 import React from 'react'
-import { MemoryRouter } from 'react-router'
 import renderer from 'react-test-renderer'
-import { setLinkComponent } from '../../../../shared/src/components/Link'
 import { RegistryExtensionOverviewPage } from './RegistryExtensionOverviewPage'
+import { PageTitle } from '../../components/PageTitle'
+import { createMemoryHistory } from 'history'
+import { Router } from 'react-router'
+
+jest.mock('mdi-react/GithubIcon', () => 'GithubIcon')
 
 describe('RegistryExtensionOverviewPage', () => {
-    setLinkComponent((props: any) => <a {...props} />)
-    afterAll(() => setLinkComponent(null as any)) // reset global env for other tests
-
-    test('renders', () =>
+    afterEach(() => {
+        PageTitle.titleSet = false
+    })
+    test('renders', () => {
+        const history = createMemoryHistory()
         expect(
             renderer
                 .create(
-                    <MemoryRouter>
+                    <Router history={history}>
                         <RegistryExtensionOverviewPage
                             eventLogger={{ logViewEvent: noop }}
                             extension={{
@@ -31,16 +35,19 @@ describe('RegistryExtensionOverviewPage', () => {
                                     },
                                 },
                             }}
+                            history={history}
                         />
-                    </MemoryRouter>
+                    </Router>
                 )
                 .toJSON()
-        ).toMatchSnapshot())
+        ).toMatchSnapshot()
+    })
 
     describe('categories', () => {
         test('filters out unrecognized categories', () => {
-            const x = renderer.create(
-                <MemoryRouter>
+            const history = createMemoryHistory()
+            const output = renderer.create(
+                <Router history={history}>
                     <RegistryExtensionOverviewPage
                         eventLogger={{ logViewEvent: noop }}
                         extension={{
@@ -52,14 +59,14 @@ describe('RegistryExtensionOverviewPage', () => {
                                 categories: ['Programming languages', 'invalid', 'Other'],
                             },
                         }}
+                        history={createMemoryHistory()}
                     />
-                </MemoryRouter>
+                </Router>
             ).root
             expect(
                 toText(
-                    x.findAll(
-                        ({ props: { className } }) =>
-                            className && className.includes('registry-extension-overview-page__categories')
+                    output.findAll(({ props: { className } }) =>
+                        className?.includes('registry-extension-overview-page__categories')
                     )
                 )
             ).toEqual(['Other', 'Programming languages' /* no 'invalid' */])
@@ -69,11 +76,11 @@ describe('RegistryExtensionOverviewPage', () => {
 
 function toText(values: (string | renderer.ReactTestInstance)[]): string[] {
     const textNodes: string[] = []
-    for (const v of values) {
-        if (typeof v === 'string') {
-            textNodes.push(v)
+    for (const value of values) {
+        if (typeof value === 'string') {
+            textNodes.push(value)
         } else {
-            textNodes.push(...toText(v.children))
+            textNodes.push(...toText(value.children))
         }
     }
     return textNodes

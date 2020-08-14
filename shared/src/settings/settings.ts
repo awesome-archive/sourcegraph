@@ -18,6 +18,9 @@ export interface IClient {
  */
 export interface Settings {
     extensions?: { [extensionID: string]: boolean }
+    experimentalFeatures?: {
+        showBadgeAttachments?: boolean
+    }
     [key: string]: any
 
     // These properties should never exist on Settings but do exist on SettingsCascade. This makes it so the
@@ -38,7 +41,8 @@ export type SettingsSubject = Pick<GQL.ISettingsSubject, 'id' | 'viewerCanAdmini
         | Pick<GQL.IUser, '__typename' | 'username' | 'displayName'>
         | Pick<GQL.IOrg, '__typename' | 'name' | 'displayName'>
         | Pick<GQL.ISite, '__typename'>
-        | Pick<GQL.IDefaultSettings, '__typename'>)
+        | Pick<GQL.IDefaultSettings, '__typename'>
+    )
 
 /**
  * A cascade of settings from multiple subjects, from lowest precedence to highest precedence, and the final
@@ -100,7 +104,7 @@ export const EMPTY_SETTINGS_CASCADE: SettingsCascade = { final: {}, subjects: []
  *
  * @template S the settings type
  */
-export interface ConfiguredSubject<S extends Settings = Settings> {
+interface ConfiguredSubject<S extends Settings = Settings> {
     /** The subject. */
     subject: SettingsSubject
 
@@ -179,6 +183,7 @@ export function mergeSettings<S extends Settings>(values: S[]): S | null {
     }
     const customFunctions: CustomMergeFunctions = {
         extensions: (base: any, add: any) => ({ ...base, ...add }),
+        experimentalFeatures: (base: any, add: any) => ({ ...base, ...add }),
         notices: (base: any, add: any) => [...base, ...add],
         'search.scopes': (base: any, add: any) => [...base, ...add],
         'search.savedQueries': (base: any, add: any) => [...base, ...add],
@@ -208,7 +213,7 @@ export interface CustomMergeFunctions {
 export function merge(base: any, add: any, custom?: CustomMergeFunctions): void {
     for (const key of Object.keys(add)) {
         if (key in base) {
-            const customEntry = custom && custom[key]
+            const customEntry = custom?.[key]
             if (customEntry && isFunction(customEntry)) {
                 base[key] = customEntry(base[key], add[key])
             } else {
@@ -241,6 +246,6 @@ export function isSettingsValid<S extends Settings>(
 /**
  * React partial props for components needing the settings cascade.
  */
-export interface SettingsCascadeProps {
-    settingsCascade: SettingsCascadeOrError
+export interface SettingsCascadeProps<S extends Settings = Settings> {
+    settingsCascade: SettingsCascadeOrError<S>
 }

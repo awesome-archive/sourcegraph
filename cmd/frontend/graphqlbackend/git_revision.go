@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/pkg/vcs/git"
+	"github.com/sourcegraph/sourcegraph/internal/vcs/git"
 )
 
 type gitRevSpecExpr struct {
@@ -21,7 +21,7 @@ func (r *gitRevSpecExpr) Object(ctx context.Context) (*gitObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	oid, err := git.ResolveRevision(ctx, *cachedRepo, nil, r.expr, nil)
+	oid, err := git.ResolveRevision(ctx, *cachedRepo, nil, r.expr, git.ResolveRevisionOptions{})
 	if err != nil {
 		return nil, err
 	}

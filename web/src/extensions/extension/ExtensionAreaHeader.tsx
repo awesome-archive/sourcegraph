@@ -11,6 +11,7 @@ import { isExtensionAdded } from './extension'
 import { ExtensionAreaRouteContext } from './ExtensionArea'
 import { ExtensionConfigurationState } from './ExtensionConfigurationState'
 import { WorkInProgressBadge } from './WorkInProgressBadge'
+import { isEncodedImage } from '../../../../shared/src/util/icon'
 
 interface ExtensionAreaHeaderProps extends ExtensionAreaRouteContext, RouteComponentProps<{}> {
     navItems: readonly ExtensionAreaHeaderNavItem[]
@@ -31,14 +32,14 @@ export const ExtensionAreaHeader: React.FunctionComponent<ExtensionAreaHeaderPro
         props.extension.manifest && !isErrorLike(props.extension.manifest) ? props.extension.manifest : undefined
     let iconURL: URL | undefined
     try {
-        if (manifest && manifest.icon) {
+        if (manifest?.icon) {
             iconURL = new URL(manifest.icon)
         }
-    } catch (e) {
+    } catch {
         // noop
     }
 
-    const isWorkInProgress = props.extension.registryExtension && props.extension.registryExtension.isWorkInProgress
+    const isWorkInProgress = props.extension.registryExtension?.isWorkInProgress
 
     return (
         <div className={`extension-area-header ${props.className || ''}`}>
@@ -47,11 +48,10 @@ export const ExtensionAreaHeader: React.FunctionComponent<ExtensionAreaHeaderPro
                     <>
                         <div className="mb-3">
                             <div className="d-flex align-items-start">
-                                {manifest &&
-                                    manifest.icon &&
+                                {manifest?.icon &&
                                     iconURL &&
                                     iconURL.protocol === 'data:' &&
-                                    /^data:image\/png(;base64)?,/.test(manifest.icon) && (
+                                    isEncodedImage(manifest.icon) && (
                                         <img className="extension-area-header__icon mr-2" src={manifest.icon} />
                                     )}
                                 <div>

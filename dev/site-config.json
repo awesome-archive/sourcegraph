@@ -1,8 +1,14 @@
 // The Sourcegraph site configuration for development servers.
 {
-  "experimentalFeatures": {
-    "discussions": "enabled"
-  },
+  "auth.providers": [
+    {
+      "type": "builtin",
+      "allowSignup": false
+    }
+  ],
+  "externalURL": "http://localhost:3080/",
+  "update.channel": "release",
+  "experimentalFeatures": {},
   "disablePublicRepoRedirects": true,
   "repoListUpdateInterval": 1
 }

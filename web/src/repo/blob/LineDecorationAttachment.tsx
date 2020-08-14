@@ -1,10 +1,11 @@
 import * as React from 'react'
 import ReactDOM from 'react-dom'
+import isAbsoluteUrl from 'is-absolute-url'
 import { DecorationAttachmentRenderOptions } from 'sourcegraph'
 import { decorationAttachmentStyleForTheme } from '../../../../shared/src/api/client/services/decoration'
 import { LinkOrSpan } from '../../../../shared/src/components/LinkOrSpan'
 import { AbsoluteRepoFile } from '../../../../shared/src/util/url'
-import { ThemeProps } from '../../theme'
+import { ThemeProps } from '../../../../shared/src/theme'
 
 interface LineDecorationAttachmentProps extends AbsoluteRepoFile, ThemeProps {
     line: number
@@ -25,19 +26,19 @@ export class LineDecorationAttachment extends React.PureComponent<LineDecoration
     private portal: Element | null = null
 
     public UNSAFE_componentWillMount(): void {
-        this.portal = document.getElementById(this.props.portalID)
+        this.portal = document.querySelector(`#${this.props.portalID}`)
     }
 
     public UNSAFE_componentWillReceiveProps(nextProps: Readonly<LineDecorationAttachmentProps>): void {
         if (
             this.props.repoName !== nextProps.repoName ||
-            this.props.rev !== nextProps.rev ||
+            this.props.revision !== nextProps.revision ||
             this.props.filePath !== nextProps.filePath ||
             this.props.line !== nextProps.line ||
             this.props.portalID !== nextProps.portalID ||
             this.props.attachment !== nextProps.attachment
         ) {
-            this.portal = document.getElementById(nextProps.portalID)
+            this.portal = document.querySelector(`#${nextProps.portalID}`)
         }
     }
 
@@ -53,12 +54,9 @@ export class LineDecorationAttachment extends React.PureComponent<LineDecoration
                 className="line-decoration-attachment"
                 to={this.props.attachment.linkURL}
                 data-tooltip={this.props.attachment.hoverMessage}
-                // Use target to open external URLs (or else react-router's Link will treat the URL as a URL path
-                // and navigation will fail).
+                // Use target to open external URLs
                 target={
-                    this.props.attachment.linkURL && /^https?:\/\//.test(this.props.attachment.linkURL)
-                        ? '_blank'
-                        : undefined
+                    this.props.attachment.linkURL && isAbsoluteUrl(this.props.attachment.linkURL) ? '_blank' : undefined
                 }
                 // Avoid leaking referrer URLs (which contain repository and path names, etc.) to external sites.
                 rel="noreferrer noopener"

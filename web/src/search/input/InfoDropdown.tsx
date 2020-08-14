@@ -1,17 +1,14 @@
 import HelpCircleOutlineIcon from 'mdi-react/HelpCircleOutlineIcon'
 import React from 'react'
-import { Dropdown } from 'reactstrap'
-import DropdownItem from 'reactstrap/lib/DropdownItem'
-import DropdownMenu from 'reactstrap/lib/DropdownMenu'
-import DropdownToggle from 'reactstrap/lib/DropdownToggle'
+import { Dropdown, DropdownItem, DropdownMenu, DropdownToggle } from 'reactstrap'
 import { renderMarkdown } from '../../../../shared/src/util/markdown'
 import { pluralize } from '../../../../shared/src/util/strings'
-import { QueryFieldExamples } from './QueryBuilderInputRow'
+import { QueryFieldExample } from '../queryBuilder/QueryBuilderInputRow'
 
 interface Props {
     title: string
     markdown: string
-    examples?: QueryFieldExamples[]
+    examples?: QueryFieldExample[]
 }
 
 interface State {
@@ -24,7 +21,7 @@ export class InfoDropdown extends React.Component<Props, State> {
         this.state = { isOpen: false }
     }
 
-    private toggleIsOpen = () => this.setState(prevState => ({ isOpen: !prevState.isOpen }))
+    private toggleIsOpen = (): void => this.setState(previousState => ({ isOpen: !previousState.isOpen }))
 
     public render(): JSX.Element | null {
         return (
@@ -53,11 +50,11 @@ export class InfoDropdown extends React.Component<Props, State> {
                                     <strong>{pluralize('Example', this.props.examples.length)}</strong>
                                 </DropdownItem>
                                 <ul className="list-unstyled mb-2">
-                                    {this.props.examples.map((ex: QueryFieldExamples) => (
-                                        <div key={ex.value}>
+                                    {this.props.examples.map(example => (
+                                        <div key={example.value}>
                                             <div className="p-2">
-                                                <span className="text-muted small">{ex.description}: </span>
-                                                <code>{ex.value}</code>
+                                                <span className="text-muted small">{example.description}: </span>
+                                                <code>{example.value}</code>
                                             </div>
                                         </div>
                                     ))}

@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/external/app"
-	"github.com/sourcegraph/sourcegraph/pkg/env"
-	stripe "github.com/stripe/stripe-go"
+	"github.com/sourcegraph/sourcegraph/internal/env"
+	"github.com/stripe/stripe-go"
 )
 
 var (

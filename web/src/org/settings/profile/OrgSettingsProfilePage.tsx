@@ -1,5 +1,4 @@
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import { upperFirst } from 'lodash'
 import * as React from 'react'
 import { RouteComponentProps } from 'react-router'
 import { concat, of, Subject, Subscription } from 'rxjs'
@@ -10,8 +9,12 @@ import { PageTitle } from '../../../components/PageTitle'
 import { eventLogger } from '../../../tracking/eventLogger'
 import { OrgAreaPageProps } from '../../area/OrgArea'
 import { updateOrganization } from '../../backend'
+import { ErrorAlert } from '../../../components/alerts'
+import * as H from 'history'
 
-interface Props extends OrgAreaPageProps, RouteComponentProps<{}> {}
+interface Props extends OrgAreaPageProps, RouteComponentProps<{}> {
+    history: H.History
+}
 
 interface State {
     displayName: string
@@ -45,8 +48,8 @@ export class OrgSettingsProfilePage extends React.PureComponent<Props, State> {
                     map(props => props.org),
                     distinctUntilKeyChanged('id')
                 )
-                .subscribe(org => {
-                    eventLogger.logViewEvent('OrgSettingsProfile', { organization: { org_name: org.name } })
+                .subscribe(() => {
+                    eventLogger.logViewEvent('OrgSettingsProfile')
                 })
         )
 
@@ -119,18 +122,18 @@ export class OrgSettingsProfilePage extends React.PureComponent<Props, State> {
                     >
                         <small>Updated!</small>
                     </div>
-                    {this.state.error && <div className="alert alert-danger">{upperFirst(this.state.error)}</div>}
+                    {this.state.error && <ErrorAlert error={this.state.error} history={this.props.history} />}
                 </Form>
             </div>
         )
     }
 
-    private onDisplayNameFieldChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        this.setState({ displayName: e.target.value })
+    private onDisplayNameFieldChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
+        this.setState({ displayName: event.target.value })
     }
 
-    private onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-        e.preventDefault()
+    private onSubmit = (event: React.FormEvent<HTMLFormElement>): void => {
+        event.preventDefault()
         this.submits.next()
     }
 }

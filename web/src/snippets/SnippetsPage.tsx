@@ -1,18 +1,16 @@
-import H from 'history'
+import * as H from 'history'
 import { uniqueId } from 'lodash'
 import React, { createRef, useEffect, useLayoutEffect, useState } from 'react'
-import { from } from 'rxjs'
 import { map } from 'rxjs/operators'
-import { EditorId } from '../../../shared/src/api/client/services/editorService'
+import { ViewerId, observeEditorAndModel } from '../../../shared/src/api/client/services/viewerService'
 import { TextModel } from '../../../shared/src/api/client/services/modelService'
-import { PanelViewWithComponent } from '../../../shared/src/api/client/services/view'
+import { PanelViewWithComponent } from '../../../shared/src/api/client/services/panelViews'
 import { SNIPPET_URI_SCHEME } from '../../../shared/src/api/client/types/textDocument'
 import { ContributableViewContainer } from '../../../shared/src/api/protocol'
 import { EditorTextField } from '../../../shared/src/components/editorTextField/EditorTextField'
 import { WithLinkPreviews } from '../../../shared/src/components/linkPreviews/WithLinkPreviews'
 import { Markdown } from '../../../shared/src/components/Markdown'
 import { ExtensionsControllerProps } from '../../../shared/src/extensions/controller'
-import { createLinkClickHandler } from '../../../shared/src/util/linkClickHandler'
 import { renderMarkdown } from '../../../shared/src/util/markdown'
 import { LINK_PREVIEW_CLASS } from '../components/linkPreviews/styles'
 import { WebEditorCompletionWidget } from '../components/shared'
@@ -28,12 +26,12 @@ interface Props extends ExtensionsControllerProps {
  * to allow experimentation with extensions that listen for changes in documents and display
  * Markdown-formatted text.
  */
-export const SnippetsPage: React.FunctionComponent<Props> = ({ location, extensionsController, ...props }) => {
+export const SnippetsPage: React.FunctionComponent<Props> = ({ location, history, extensionsController }) => {
     const [textArea, setTextArea] = useState<HTMLTextAreaElement | null>(null)
-    const textAreaRef = createRef<HTMLTextAreaElement>()
-    useLayoutEffect(() => setTextArea(textAreaRef.current), [textAreaRef])
+    const textAreaReference = createRef<HTMLTextAreaElement>()
+    useLayoutEffect(() => setTextArea(textAreaReference.current), [textAreaReference])
 
-    const [editorId, setEditorId] = useState<EditorId | null>(null)
+    const [viewerId, setViewerId] = useState<ViewerId | null>(null)
     const [modelUri, setModelUri] = useState<string | null>(null)
 
     const urlQuery = new URLSearchParams(location.search)
@@ -51,44 +49,47 @@ export const SnippetsPage: React.FunctionComponent<Props> = ({ location, extensi
         }
         extensionsController.services.model.addModel(model)
         setModelUri(model.uri)
-        const editor = extensionsController.services.editor.addEditor({
+        const editor = extensionsController.services.viewer.addViewer({
             type: 'CodeEditor',
             resource: model.uri,
             selections: [],
             isActive: true,
         })
-        setEditorId(editor)
+        setViewerId(editor)
         return () => {
-            extensionsController.services.editor.removeEditor(editor)
-            extensionsController.services.model.removeModel(model.uri)
+            extensionsController.services.viewer.removeViewer(editor)
         }
     }, [
         initialModelUriScheme,
         initialModelLanguageId,
         initialModelText,
         extensionsController.services.model,
-        extensionsController.services.editor,
+        extensionsController.services.viewer,
     ])
 
     const [panelViews, setPanelViews] = useState<PanelViewWithComponent[] | null>(null)
     useEffect(() => {
-        const subscription = extensionsController.services.views
-            .getViews(ContributableViewContainer.Panel)
+        const subscription = extensionsController.services.panelViews
+            .getPanelViews(ContributableViewContainer.Panel)
             .subscribe(views => setPanelViews(views))
         return () => subscription.unsubscribe()
-    }, [extensionsController.services.views])
+    }, [extensionsController.services.panelViews])
 
     // Add Markdown panel for Markdown snippets.
     const [modelText, setModelText] = useState<string | null>(null)
     useEffect(() => {
-        if (!editorId) {
+        if (!viewerId) {
             return () => undefined
         }
-        const subscription = from(extensionsController.services.editor.observeEditorAndModel(editorId))
+        const subscription = observeEditorAndModel(
+            viewerId,
+            extensionsController.services.viewer,
+            extensionsController.services.model
+        )
             .pipe(map(editor => editor.model.text))
             .subscribe(text => setModelText(text || null))
         return () => subscription.unsubscribe()
-    }, [editorId, initialModelLanguageId, extensionsController.services.editor])
+    }, [viewerId, initialModelLanguageId, extensionsController.services.viewer, extensionsController.services.model])
     const allPanelViews: PanelViewWithComponent[] | null =
         initialModelLanguageId === 'markdown' && modelText !== null
             ? [...(panelViews || []), { title: 'Preview', content: modelText, priority: 0 }]
@@ -97,43 +98,43 @@ export const SnippetsPage: React.FunctionComponent<Props> = ({ location, extensi
     return (
         <div className="container mt-3">
             <h1>
-                Snippet editor <span className="badge badge-warning">Experimental</span>
+                Snippet editor <span className="badge badge-warning text-uppercase">Experimental</span>
             </h1>
-            {editorId && modelUri && (
+            {viewerId && modelUri && (
                 <>
                     {textArea && (
                         <WebEditorCompletionWidget
                             textArea={textArea}
-                            editorId={editorId.editorId}
+                            viewerId={viewerId.viewerId}
                             extensionsController={extensionsController}
                         />
                     )}
                     <EditorTextField
                         className={`form-control ${textAreaClassName || ''}`}
                         placeholder="Type a snippet"
-                        editorId={editorId.editorId}
+                        viewerId={viewerId.viewerId}
                         modelUri={modelUri}
                         autoFocus={true}
                         spellCheck={false}
                         rows={12}
-                        textAreaRef={textAreaRef}
+                        textAreaRef={textAreaReference}
                         extensionsController={extensionsController}
                     />
                 </>
             )}
             {allPanelViews &&
                 allPanelViews.length > 0 &&
-                allPanelViews.map((view, i) => (
-                    <div key={i} className="mt-3 card">
+                allPanelViews.map((view, index) => (
+                    <div key={index} className="mt-3 card">
                         <h3 className="card-header">{view.title}</h3>
-                        <div className="card-body" onClick={createLinkClickHandler(props.history)}>
+                        <div className="card-body">
                             <WithLinkPreviews
                                 dangerousInnerHTML={renderMarkdown(view.content)}
                                 extensionsController={extensionsController}
                                 setElementTooltip={setElementTooltip}
                                 linkPreviewContentClass={LINK_PREVIEW_CLASS}
                             >
-                                {props => <Markdown {...props} />}
+                                {props => <Markdown {...props} history={history} />}
                             </WithLinkPreviews>
                         </div>
                     </div>

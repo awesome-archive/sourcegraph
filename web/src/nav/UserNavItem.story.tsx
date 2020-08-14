@@ -6,50 +6,58 @@ import { MemoryRouter } from 'react-router'
 import * as GQL from '../../../shared/src/graphql/schema'
 import { ThemePreference } from '../theme'
 import { UserNavItem } from './UserNavItem'
-
-import './UserNavItem.scss'
+import webStyles from '../SourcegraphWebApp.scss'
 
 const onThemePreferenceChange = action('onThemePreferenceChange')
 
-const { add } = storiesOf('UserNavItem', module).addDecorator(story => (
-    <div className="theme-light" style={{ display: 'inline-block', position: 'relative', margin: '2rem' }}>
-        {story()}
-    </div>
+const { add } = storiesOf('web/UserNavItem', module).addDecorator(story => (
+    <>
+        <style>{webStyles}</style>
+        <div className="theme-light">{story()}</div>
+    </>
 ))
 
 const OpenUserNavItem: React.FunctionComponent<UserNavItem['props']> = props => {
-    const openDropdown = useCallback((e: UserNavItem | null) => {
-        if (e) {
-            e.setState({ isOpen: true })
+    const openDropdown = useCallback((userNavItem: UserNavItem | null) => {
+        if (userNavItem) {
+            userNavItem.setState({ isOpen: true })
         }
     }, [])
     return <UserNavItem {...props} ref={openDropdown} />
 }
 
-add('Site admin', () => (
-    <MemoryRouter>
-        <OpenUserNavItem
-            authenticatedUser={{
-                username: 'alice',
-                avatarURL: null,
-                session: { __typename: 'Session', canSignOut: true },
-                settingsURL: '#',
-                siteAdmin: true,
-                organizations: {
-                    __typename: 'OrgConnection',
-                    totalCount: 3,
-                    nodes: [
-                        { id: '0', settingsURL: '#', displayName: 'Acme Corp' },
-                        { id: '1', settingsURL: '#', displayName: 'Beta Inc' },
-                    ] as GQL.IOrg[],
-                },
-            }}
-            isLightTheme={true}
-            themePreference={ThemePreference.Light}
-            location={H.createMemoryHistory().location}
-            onThemePreferenceChange={onThemePreferenceChange}
-            showDiscussions={true}
-            showDotComMarketing={true}
-        />
-    </MemoryRouter>
-))
+add(
+    'Site admin',
+    () => (
+        <MemoryRouter>
+            <OpenUserNavItem
+                authenticatedUser={{
+                    username: 'alice',
+                    avatarURL: null,
+                    session: { __typename: 'Session', canSignOut: true },
+                    settingsURL: '#',
+                    siteAdmin: true,
+                    organizations: {
+                        __typename: 'OrgConnection',
+                        totalCount: 3,
+                        nodes: [
+                            { id: '0', settingsURL: '#', displayName: 'Acme Corp' },
+                            { id: '1', settingsURL: '#', displayName: 'Beta Inc' },
+                        ] as GQL.IOrg[],
+                    },
+                }}
+                isLightTheme={true}
+                themePreference={ThemePreference.Light}
+                location={H.createMemoryHistory().location}
+                onThemePreferenceChange={onThemePreferenceChange}
+                showDotComMarketing={true}
+            />
+        </MemoryRouter>
+    ),
+    {
+        design: {
+            type: 'figma',
+            url: 'https://www.figma.com/file/BkY8Ak997QauG0Iu2EqArv/Sourcegraph-Components?node-id=368%3A834',
+        },
+    }
+)

@@ -13,14 +13,14 @@ import { KeyPath } from '../client/services/settings'
  */
 export type Raw<TContribution> = { [K in keyof TContribution]: RawValue<TContribution[K]> }
 // need a type alias so union types (including undefined for optional properties) distribute
-type RawValue<V> = V extends Expression<any> ? string : (V extends Primitive | null | undefined ? V : Raw<V>)
+type RawValue<V> = V extends Expression<any> ? string : V extends Primitive | null | undefined ? V : Raw<V>
 
 /**
  * The given contribution type after being evaluated (all expressions replaced with their value)
  */
 export type Evaluated<TContribution> = { [K in keyof TContribution]: EvaluatedValue<TContribution[K]> }
 // need a type alias so union types (including undefined for optional properties) distribute
-type EvaluatedValue<V> = V extends Expression<infer T> ? T : (V extends Primitive | null | undefined ? V : Evaluated<V>)
+type EvaluatedValue<V> = V extends Expression<infer T> ? T : V extends Primitive | null | undefined ? V : Evaluated<V>
 
 /**
  * Describes the functionality provided by an extension.
@@ -31,6 +31,9 @@ export interface Contributions {
 
     /** Menu items contributed by the extension. */
     menus?: MenuContributions
+
+    /** Views contributed by the extension. */
+    views?: ViewContribution[]
 
     /** Search filters contributed by the extension */
     searchFilters?: SearchFilters[]
@@ -295,12 +298,48 @@ export interface SearchFilters {
 }
 
 /** The containers to which an extension can contribute views. */
-export enum ContributableViewContainer {
+export const ContributableViewContainer = {
     /**
      * A view that is displayed in the panel for a window.
      *
      * Clients: The client should render this as a resizable panel in a window, with multiple tabs to switch
      * between different panel views.
      */
-    Panel = 'window/panel',
+    Panel: 'window/panel',
+
+    /**
+     * A global page view, displayed as a standalone page at `/views/ID`.
+     */
+    GlobalPage: 'global/page',
+
+    /**
+     * A view contributed to directory pages.
+     */
+    Directory: 'directory',
+
+    /**
+     * A view contributed to the area on the homepage below the search box.
+     */
+    Homepage: 'homepage',
+
+    /**
+     * A view contributed to the dashboard on the insights page.
+     */
+    InsightsPage: 'insightsPage',
+} as const
+export type ContributableViewContainer = typeof ContributableViewContainer[keyof typeof ContributableViewContainer]
+
+/**
+ * A view contributed by an extension.
+ */
+export interface ViewContribution {
+    /**
+     * The identifier for this view, which must be unique among all contributed views.
+     */
+    id: string
+
+    /**
+     * The container where this view will be displayed.
+     */
+    where: ContributableViewContainer
 }

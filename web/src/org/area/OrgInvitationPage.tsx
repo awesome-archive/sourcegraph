@@ -1,5 +1,4 @@
 import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
-import { upperFirst } from 'lodash'
 import * as React from 'react'
 import { Link, Redirect } from 'react-router-dom'
 import { concat, Observable, Subject, Subscription } from 'rxjs'
@@ -18,12 +17,15 @@ import { eventLogger } from '../../tracking/eventLogger'
 import { userURL } from '../../user'
 import { OrgAvatar } from '../OrgAvatar'
 import { OrgAreaPageProps } from './OrgArea'
+import { ErrorAlert } from '../../components/alerts'
+import * as H from 'history'
 
 interface Props extends OrgAreaPageProps {
     authenticatedUser: GQL.IUser
 
     /** Called when the viewer responds to the invitation. */
     onDidRespondToInvitation: () => void
+    history: H.History
 }
 
 interface State {
@@ -75,12 +77,15 @@ export const OrgInvitationPage = withAuthenticatedUser(
                                         refreshAuthenticatedUser(),
                                         { submissionOrError: null },
                                     ]),
-                                    catchError(err => [{ submissionOrError: asError(err) }])
+                                    catchError(error => [{ submissionOrError: asError(error) }])
                                 )
                             )
                         )
                     )
-                    .subscribe(stateUpdate => this.setState(stateUpdate as State), err => console.error(err))
+                    .subscribe(
+                        stateUpdate => this.setState(stateUpdate as State),
+                        error => console.error(error)
+                    )
             )
 
             this.componentUpdates.next(this.props)
@@ -154,9 +159,11 @@ export const OrgInvitationPage = withAuthenticatedUser(
                                     </button>
                                 </div>
                                 {isErrorLike(this.state.submissionOrError) && (
-                                    <div className="alert alert-danger my-2">
-                                        {upperFirst(this.state.submissionOrError.message)}
-                                    </div>
+                                    <ErrorAlert
+                                        className="my-2"
+                                        error={this.state.submissionOrError}
+                                        history={this.props.history}
+                                    />
                                 )}
                                 {this.state.submissionOrError === 'loading' && (
                                     <LoadingSpinner className="icon-inline" />
@@ -170,13 +177,13 @@ export const OrgInvitationPage = withAuthenticatedUser(
             )
         }
 
-        private onAcceptInvitation: React.MouseEventHandler<HTMLButtonElement> = e => {
-            e.preventDefault()
+        private onAcceptInvitation: React.MouseEventHandler<HTMLButtonElement> = event => {
+            event.preventDefault()
             this.responses.next(GQL.OrganizationInvitationResponseType.ACCEPT)
         }
 
-        private onDeclineInvitation: React.MouseEventHandler<HTMLButtonElement> = e => {
-            e.preventDefault()
+        private onDeclineInvitation: React.MouseEventHandler<HTMLButtonElement> = event => {
+            event.preventDefault()
             this.responses.next(GQL.OrganizationInvitationResponseType.REJECT)
         }
 

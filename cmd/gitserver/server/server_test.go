@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -15,8 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/inconshreveable/log15"
 	"github.com/pkg/errors"
-	"github.com/sourcegraph/sourcegraph/pkg/mutablelimiter"
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/mutablelimiter"
 )
 
 type Test struct {
@@ -102,8 +105,8 @@ func TestRequest(t *testing.T) {
 	s := &Server{ReposDir: "/testroot", skipCloneForTests: true}
 	h := s.Handler()
 
-	repoCloned = func(dir string) bool {
-		return dir == "/testroot/github.com/gorilla/mux" || dir == "/testroot/my-mux"
+	repoCloned = func(dir GitDir) bool {
+		return dir == s.dir("github.com/gorilla/mux") || dir == s.dir("my-mux")
 	}
 
 	testRepoExists = func(ctx context.Context, url string) error {
@@ -119,8 +122,8 @@ func TestRequest(t *testing.T) {
 	runCommandMock = func(ctx context.Context, cmd *exec.Cmd) (int, error) {
 		switch cmd.Args[1] {
 		case "testcommand":
-			cmd.Stdout.Write([]byte("teststdout"))
-			cmd.Stderr.Write([]byte("teststderr"))
+			_, _ = cmd.Stdout.Write([]byte("teststdout"))
+			_, _ = cmd.Stderr.Write([]byte("teststderr"))
 			return 42, nil
 		case "testerror":
 			return 0, errors.New("testerror")
@@ -156,17 +159,24 @@ func TestRequest(t *testing.T) {
 	}
 }
 
-func BenchmarkQuickRevParseHead_packed_refs(b *testing.B) {
-	dir, err := ioutil.TempDir("", "gitserver_test")
+func BenchmarkQuickRevParseHeadQuickSymbolicRefHead_packed_refs(b *testing.B) {
+	tmp, err := ioutil.TempDir("", "gitserver_test")
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer os.RemoveAll(tmp)
 
+	dir := filepath.Join(tmp, ".git")
+	gitDir := GitDir(dir)
+	if err := os.Mkdir(string(dir), 0700); err != nil {
+		b.Fatal(err)
+	}
+
+	masterRef := "refs/heads/master"
 	// This simulates the most amount of work quickRevParseHead has to do, and
 	// is also the most common in prod. That is where the final rev is in
 	// packed-refs.
-	err = ioutil.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/master\n"), 0600)
+	err = ioutil.WriteFile(filepath.Join(dir, "HEAD"), []byte(fmt.Sprintf("ref: %s\n", masterRef)), 0600)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -207,12 +217,19 @@ func BenchmarkQuickRevParseHead_packed_refs(b *testing.B) {
 	b.ResetTimer()
 
 	for n := 0; n < b.N; n++ {
-		rev, err := quickRevParseHead(dir)
+		rev, err := quickRevParseHead(gitDir)
 		if err != nil {
 			b.Fatal(err)
 		}
 		if rev != masterRev {
 			b.Fatal("unexpected rev: ", rev)
+		}
+		ref, err := quickSymbolicRefHead(gitDir)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if ref != masterRef {
+			b.Fatal("unexpected ref: ", ref)
 		}
 	}
 
@@ -220,18 +237,25 @@ func BenchmarkQuickRevParseHead_packed_refs(b *testing.B) {
 	b.StopTimer()
 }
 
-func BenchmarkQuickRevParseHead_unpacked_refs(b *testing.B) {
-	dir, err := ioutil.TempDir("", "gitserver_test")
+func BenchmarkQuickRevParseHeadQuickSymbolicRefHead_unpacked_refs(b *testing.B) {
+	tmp, err := ioutil.TempDir("", "gitserver_test")
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer os.RemoveAll(tmp)
+
+	dir := filepath.Join(tmp, ".git")
+	gitDir := GitDir(dir)
+	if err := os.Mkdir(string(dir), 0700); err != nil {
+		b.Fatal(err)
+	}
 
 	// This simulates the usual case for a repo that HEAD is often
 	// updated. The master ref will be unpacked.
+	masterRef := "refs/heads/master"
 	masterRev := "4d5092a09bca95e0153c423d76ef62d4fcd168ec"
 	files := map[string]string{
-		"HEAD":              "ref: refs/heads/master\n",
+		"HEAD":              fmt.Sprintf("ref: %s\n", masterRef),
 		"refs/heads/master": masterRev + "\n",
 	}
 	for path, content := range files {
@@ -250,12 +274,19 @@ func BenchmarkQuickRevParseHead_unpacked_refs(b *testing.B) {
 	b.ResetTimer()
 
 	for n := 0; n < b.N; n++ {
-		rev, err := quickRevParseHead(dir)
+		rev, err := quickRevParseHead(gitDir)
 		if err != nil {
 			b.Fatal(err)
 		}
 		if rev != masterRev {
 			b.Fatal("unexpected rev: ", rev)
+		}
+		ref, err := quickSymbolicRefHead(gitDir)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if ref != masterRef {
+			b.Fatal("unexpected ref: ", ref)
 		}
 	}
 
@@ -277,7 +308,12 @@ func TestUrlRedactor(t *testing.T) {
 		{
 			url:      "http://user:password@github.com/foo/bar/",
 			message:  "fatal: repository 'http://user:password@github.com/foo/bar/' not found",
-			redacted: "fatal: repository 'http://<redacted>:<redacted>@github.com/foo/bar/' not found",
+			redacted: "fatal: repository 'http://user:<redacted>@github.com/foo/bar/' not found",
+		},
+		{
+			url:      "http://git:password@github.com/foo/bar/",
+			message:  "fatal: repository 'http://git:password@github.com/foo/bar/' not found",
+			redacted: "fatal: repository 'http://git:<redacted>@github.com/foo/bar/' not found",
 		},
 		{
 			url:      "http://token@github.com///repo//nick/",
@@ -296,32 +332,38 @@ func TestUrlRedactor(t *testing.T) {
 		},
 	}
 	for _, testCase := range testCases {
-		if actual := newURLRedactor(testCase.url).redact(testCase.message); actual != testCase.redacted {
-			t.Errorf("newUrlRedactor(%q).redact(%q) got %q; want %q", testCase.url, testCase.message, actual, testCase.redacted)
-		}
+		t.Run("", func(t *testing.T) {
+			if actual := newURLRedactor(testCase.url).redact(testCase.message); actual != testCase.redacted {
+				t.Fatalf("newUrlRedactor(%q).redact(%q) got %q; want %q", testCase.url, testCase.message, actual, testCase.redacted)
+			}
+		})
 	}
 }
 
+func runCmd(t *testing.T, dir string, cmd string, arg ...string) string {
+	t.Helper()
+	c := exec.Command(cmd, arg...)
+	c.Dir = dir
+	c.Env = []string{
+		"GIT_COMMITTER_NAME=a",
+		"GIT_COMMITTER_EMAIL=a@a.com",
+		"GIT_AUTHOR_NAME=a",
+		"GIT_AUTHOR_EMAIL=a@a.com",
+	}
+	b, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %s failed: %s\nOutput: %s", cmd, strings.Join(arg, " "), err, b)
+	}
+	return string(b)
+}
+
 func TestCloneRepo(t *testing.T) {
-	remote, cleanup1 := tmpDir(t)
-	defer cleanup1()
+	remote := tmpDir(t)
 
 	repo := remote
 	cmd := func(name string, arg ...string) string {
 		t.Helper()
-		c := exec.Command(name, arg...)
-		c.Dir = repo
-		c.Env = []string{
-			"GIT_COMMITTER_NAME=a",
-			"GIT_COMMITTER_EMAIL=a@a.com",
-			"GIT_AUTHOR_NAME=a",
-			"GIT_AUTHOR_EMAIL=a@a.com",
-		}
-		b, err := c.Output()
-		if err != nil {
-			t.Fatalf("%s %s failed: %s", name, strings.Join(arg, " "), err)
-		}
-		return string(b)
+		return runCmd(t, repo, name, arg...)
 	}
 
 	// Setup a repo with a commit so we can see if we can clone it.
@@ -330,9 +372,10 @@ func TestCloneRepo(t *testing.T) {
 	cmd("git", "add", "hello.txt")
 	cmd("git", "commit", "-m", "hello")
 	wantCommit := cmd("git", "rev-parse", "HEAD")
+	// Add a bad tag
+	cmd("git", "tag", "HEAD")
 
-	reposDir, cleanup2 := tmpDir(t)
-	defer cleanup2()
+	reposDir := tmpDir(t)
 
 	s := &Server{
 		ReposDir:         reposDir,
@@ -349,7 +392,7 @@ func TestCloneRepo(t *testing.T) {
 	// Wait until the clone is done. Please do not use this code snippet
 	// outside of a test. We only know this works since our test only starts
 	// one clone and will have nothing else attempt to lock.
-	dst := filepath.Join(s.ReposDir, "example.com/foo/bar")
+	dst := s.dir(api.RepoName("example.com/foo/bar"))
 	for i := 0; i < 1000; i++ {
 		_, cloning := s.locker.Status(dst)
 		if !cloning {
@@ -358,10 +401,10 @@ func TestCloneRepo(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	repo = dst
+	repo = filepath.Dir(string(dst))
 	gotCommit := cmd("git", "rev-parse", "HEAD")
 	if wantCommit != gotCommit {
-		t.Fatal("failed to clone")
+		t.Fatal("failed to clone:", gotCommit)
 	}
 
 	// Test blocking with a failure (already exists since we didn't specify overwrite)
@@ -372,19 +415,74 @@ func TestCloneRepo(t *testing.T) {
 
 	// Test blocking with overwrite. First add random file to GIT_DIR. If the
 	// file is missing after cloning we know the directory was replaced
-	mkFiles(t, dst, ".git/HELLO")
+	mkFiles(t, string(dst), "HELLO")
 	_, err = s.cloneRepo(context.Background(), "example.com/foo/bar", remote, &cloneOptions{Block: true, Overwrite: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dst, ".git/HELLO")); !os.IsNotExist(err) {
+	if _, err := os.Stat(dst.Path("HELLO")); !os.IsNotExist(err) {
 		t.Fatalf("expected clone to be overwritten: %s", err)
 	}
 
-	repo = dst
+	repo = filepath.Dir(string(dst))
 	gotCommit = cmd("git", "rev-parse", "HEAD")
 	if wantCommit != gotCommit {
-		t.Fatal("failed to clone")
+		t.Fatal("failed to clone:", gotCommit)
 	}
+}
+
+func TestRemoveBadRefs(t *testing.T) {
+	dir := tmpDir(t)
+	gitDir := GitDir(filepath.Join(dir, ".git"))
+
+	cmd := func(name string, arg ...string) string {
+		t.Helper()
+		return runCmd(t, dir, name, arg...)
+	}
+
+	// Setup a repo with a commit so we can add bad refs
+	cmd("git", "init", ".")
+	cmd("sh", "-c", "echo hello world > hello.txt")
+	cmd("git", "add", "hello.txt")
+	cmd("git", "commit", "-m", "hello")
+	want := cmd("git", "rev-parse", "HEAD")
+
+	for _, name := range []string{"HEAD", "head", "Head", "HeAd"} {
+		// Tag
+		cmd("git", "tag", name)
+
+		if dontWant := cmd("git", "rev-parse", "HEAD"); dontWant == want {
+			t.Logf("WARNING: git tag %s failed to produce ambiguous output: %s", name, dontWant)
+		}
+
+		removeBadRefs(context.Background(), gitDir)
+
+		if got := cmd("git", "rev-parse", "HEAD"); got != want {
+			t.Fatalf("git tag %s failed to be removed: %s", name, got)
+		}
+
+		// Ref
+		if err := ioutil.WriteFile(filepath.Join(dir, ".git", "refs", "heads", name), []byte(want), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		if dontWant := cmd("git", "rev-parse", "HEAD"); dontWant == want {
+			t.Logf("WARNING: git ref %s failed to produce ambiguous output: %s", name, dontWant)
+		}
+
+		removeBadRefs(context.Background(), gitDir)
+
+		if got := cmd("git", "rev-parse", "HEAD"); got != want {
+			t.Fatalf("git ref %s failed to be removed: %s", name, got)
+		}
+	}
+}
+
+func TestMain(m *testing.M) {
+	flag.Parse()
+	if !testing.Verbose() {
+		log15.Root().SetHandler(log15.DiscardHandler())
+	}
+	os.Exit(m.Run())
 }

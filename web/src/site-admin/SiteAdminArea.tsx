@@ -10,6 +10,8 @@ import { ErrorBoundary } from '../components/ErrorBoundary'
 import { HeroPage } from '../components/HeroPage'
 import { RouteDescriptor } from '../util/contributions'
 import { SiteAdminSidebar, SiteAdminSideBarGroups } from './SiteAdminSidebar'
+import { LoadingSpinner } from '@sourcegraph/react-loading-spinner'
+import { TelemetryProps } from '../../../shared/src/telemetry/telemetryService'
 
 const NotFoundPage: React.ComponentType<{}> = () => (
     <HeroPage
@@ -23,7 +25,11 @@ const NotSiteAdminPage: React.ComponentType<{}> = () => (
     <HeroPage icon={MapSearchIcon} title="403: Forbidden" subtitle="Only site admins are allowed here." />
 )
 
-export interface SiteAdminAreaRouteContext extends PlatformContextProps, SettingsCascadeProps, ActivationProps {
+export interface SiteAdminAreaRouteContext
+    extends PlatformContextProps,
+        SettingsCascadeProps,
+        ActivationProps,
+        TelemetryProps {
     site: Pick<GQL.ISite, '__typename' | 'id'>
     authenticatedUser: GQL.IUser
     isLightTheme: boolean
@@ -38,7 +44,8 @@ interface SiteAdminAreaProps
     extends RouteComponentProps<{}>,
         PlatformContextProps,
         SettingsCascadeProps,
-        ActivationProps {
+        ActivationProps,
+        TelemetryProps {
     routes: readonly SiteAdminAreaRoute[]
     sideBarGroups: SiteAdminSideBarGroups
     overviewComponents: readonly React.ComponentType[]
@@ -60,30 +67,35 @@ const AuthenticatedSiteAdminArea: React.FunctionComponent<SiteAdminAreaProps> = 
         activation: props.activation,
         site: { __typename: 'Site' as const, id: window.context.siteGQLID },
         overviewComponents: props.overviewComponents,
+        telemetryService: props.telemetryService,
     }
 
     return (
-        <div className="site-admin-area d-flex container">
+        <div className="site-admin-area d-flex container my-3">
             <SiteAdminSidebar className="flex-0 mr-3" groups={props.sideBarGroups} />
             <div className="flex-1">
                 <ErrorBoundary location={props.location}>
-                    <Switch>
-                        {props.routes.map(
-                            /* eslint-disable react/jsx-no-bind */
-                            ({ render, path, exact, condition = () => true }) =>
-                                condition(context) && (
-                                    <Route
-                                        // see https://github.com/ReactTraining/react-router/issues/4578#issuecomment-334489490
-                                        key="hardcoded-key"
-                                        path={props.match.url + path}
-                                        exact={exact}
-                                        render={routeComponentProps => render({ ...context, ...routeComponentProps })}
-                                    />
-                                )
-                            /* eslint-enable react/jsx-no-bind */
-                        )}
-                        <Route component={NotFoundPage} />
-                    </Switch>
+                    <React.Suspense fallback={<LoadingSpinner className="icon-inline m-2" />}>
+                        <Switch>
+                            {props.routes.map(
+                                /* eslint-disable react/jsx-no-bind */
+                                ({ render, path, exact, condition = () => true }) =>
+                                    condition(context) && (
+                                        <Route
+                                            // see https://github.com/ReactTraining/react-router/issues/4578#issuecomment-334489490
+                                            key="hardcoded-key"
+                                            path={props.match.url + path}
+                                            exact={exact}
+                                            render={routeComponentProps =>
+                                                render({ ...context, ...routeComponentProps })
+                                            }
+                                        />
+                                    )
+                                /* eslint-enable react/jsx-no-bind */
+                            )}
+                            <Route component={NotFoundPage} />
+                        </Switch>
+                    </React.Suspense>
                 </ErrorBoundary>
             </div>
         </div>

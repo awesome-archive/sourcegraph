@@ -65,12 +65,7 @@ export function queryConfiguredRegistryExtensions(
         })
     ).pipe(
         map(({ data, errors }) => {
-            if (
-                !data ||
-                !data.extensionRegistry ||
-                !data.extensionRegistry.extensions ||
-                !data.extensionRegistry.extensions.nodes
-            ) {
+            if (!data?.extensionRegistry?.extensions?.nodes) {
                 throw createAggregateError(errors)
             }
             return data.extensionRegistry.extensions.nodes.map(
@@ -86,7 +81,7 @@ export function queryConfiguredRegistryExtensions(
         map(registryExtensions => {
             const configuredExtensions: ConfiguredRegistryExtension[] = []
             for (const extensionID of extensionIDs) {
-                const registryExtension = registryExtensions.find(x => x.extensionID === extensionID)
+                const registryExtension = registryExtensions.find(extension => extension.extensionID === extensionID)
                 configuredExtensions.push(
                     registryExtension
                         ? toConfiguredRegistryExtension(registryExtension)
